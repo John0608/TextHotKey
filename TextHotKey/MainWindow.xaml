@@ -1,0 +1,223 @@
+﻿<Window x:Class="TextHotKey.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:local="clr-namespace:TextHotKey"
+        mc:Ignorable="d"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        Title="TextHotKey" Height="600" Width="400"
+        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        Background="{DynamicResource MaterialDesignPaper}"
+        FontFamily="{materialDesign:MaterialDesignFont}"
+        ResizeMode="NoResize"
+        WindowStyle="None"
+        AllowsTransparency="True">
+
+    <Window.Resources>
+        <Style x:Key="ThemeToggleButton" 
+           TargetType="ToggleButton" 
+           BasedOn="{StaticResource MaterialDesignActionToggleButton}">
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource MaterialDesignToolBarBackground}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource MaterialDesignBody}"/>
+                </Trigger>
+                <Trigger Property="IsChecked" Value="False">
+                    <Setter Property="Background" Value="{DynamicResource MaterialDesignToolBarBackground}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource MaterialDesignBody}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <materialDesign:DialogHost Identifier="RootDialog">
+        <Border Background="{DynamicResource MaterialDesignPaper}"
+            BorderBrush="{DynamicResource MaterialDesignDivider}"
+            BorderThickness="1">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="48"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="60"/>
+                </Grid.RowDefinitions>
+
+                <!-- 타이틀바 -->
+                <Grid Grid.Row="0"
+                  Background="{DynamicResource MaterialDesignToolBarBackground}"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                  Name="TitleBar">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                           Text="TextHotKey"
+                           Style="{StaticResource MaterialDesignSubtitle1TextBlock}"
+                           VerticalAlignment="Center"
+                           Margin="16,0,0,0"/>
+
+                    <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+
+                        <ToggleButton x:Name="ThemeToggle"
+                                  Style="{StaticResource ThemeToggleButton}"
+                                  Margin="0,0,4,0"
+                                  Checked="ThemeToggle_Checked"
+                                  Unchecked="ThemeToggle_Unchecked"
+                                  ToolTip="다크/라이트 모드">
+                            <materialDesign:ToggleButtonAssist.OnContent>
+                                <materialDesign:PackIcon Kind="WeatherNight"/>
+                            </materialDesign:ToggleButtonAssist.OnContent>
+                            <materialDesign:PackIcon Kind="WhiteBalanceSunny"/>
+                        </ToggleButton>
+
+                        <Button Style="{StaticResource MaterialDesignIconButton}"
+                            Click="MinimizeButton_Click">
+                            <materialDesign:PackIcon Kind="WindowMinimize"
+                                                 Foreground="{DynamicResource MaterialDesignBody}"/>
+                        </Button>
+
+                        <Button Style="{StaticResource MaterialDesignIconButton}"
+                            Click="CloseButton_Click">
+                            <materialDesign:PackIcon Kind="WindowClose"
+                                                 Foreground="{DynamicResource MaterialDesignBody}"/>
+                        </Button>
+
+                    </StackPanel>
+                </Grid>
+
+                <!-- 페이지 영역 -->
+                <Grid Grid.Row="1">
+
+                    <!-- 홈 페이지 -->
+                    <Grid x:Name="HomePage" Visibility="Visible">
+                        <StackPanel HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="단축키 활성화"
+                                   Style="{StaticResource MaterialDesignHeadline6TextBlock}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,16"/>
+                            <ToggleButton x:Name="ActivateToggle"
+                                      Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                      HorizontalAlignment="Center"
+                                      Checked="ActivateToggle_Checked"
+                                      Unchecked="ActivateToggle_Unchecked"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- 설정 페이지 -->
+                    <Grid x:Name="SettingsPage" Visibility="Collapsed">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="16">
+
+                                <TextBlock Text="일반"
+                                       Style="{StaticResource MaterialDesignSubtitle1TextBlock}"
+                                       Margin="0,0,0,8"/>
+                                <CheckBox x:Name="AutoStartCheckBox"
+                                      Content="윈도우 시작 시 자동 실행"
+                                      Style="{StaticResource MaterialDesignCheckBox}"
+                                      Margin="0,0,0,24"
+                                      Checked="AutoStartCheckBox_Checked"
+                                      Unchecked="AutoStartCheckBox_Unchecked"/>
+
+                                <Separator Margin="0,0,0,24"/>
+
+                                <TextBlock Text="단축키 설정"
+                                       Style="{StaticResource MaterialDesignSubtitle1TextBlock}"
+                                       Margin="0,0,0,8"/>
+
+                                <ListView x:Name="HotkeyListView"
+                                            Style="{StaticResource MaterialDesignListView}"
+                                            MaxHeight="200"
+                                            Margin="0,0,0,16">
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Header="단축키" 
+                                                            Width="120"
+                                                            DisplayMemberBinding="{Binding Hotkey}"/>
+                                            <GridViewColumn Header="텍스트" 
+                                                            Width="120"
+                                                            DisplayMemberBinding="{Binding Text}"/>
+                                            <GridViewColumn Header="삭제" 
+                                                            Width="60">
+                                            <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Style="{StaticResource MaterialDesignIconButton}"
+                                                                Width="24" 
+                                                                Height="24"
+                                                                Click="DeleteButton_Click"
+                                                                Tag="{Binding}">
+                                                            <materialDesign:PackIcon    Kind="Delete"
+                                                                                        Width="16" 
+                                                                                        Height="16"/>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                        </GridView>
+                                    </ListView.View>
+                                </ListView>
+
+                                <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Right">
+                                    <Button Content="추가"
+                                        Style="{StaticResource MaterialDesignRaisedButton}"
+                                        Click="AddButton_Click"/>
+                                </StackPanel>
+
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+
+                </Grid>
+
+                <!-- 하단 탭 -->
+                <Border Grid.Row="2"
+                    Background="{DynamicResource MaterialDesignToolBarBackground}"
+                    Height="60">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Button Grid.Column="0"
+                            x:Name="HomeTabButton"
+                            Style="{StaticResource MaterialDesignFlatButton}"
+                            Foreground="{DynamicResource MaterialDesignBody}"
+                            Click="HomeTab_Click"
+                            Height="60">
+                            <StackPanel>
+                                <materialDesign:PackIcon Kind="Home"
+                                                     HorizontalAlignment="Center"/>
+                                <TextBlock Text="홈"
+                                       HorizontalAlignment="Center"
+                                       FontSize="11"/>
+                            </StackPanel>
+                        </Button>
+
+                        <Button Grid.Column="1"
+                            x:Name="SettingsTabButton"
+                            Style="{StaticResource MaterialDesignFlatButton}"
+                            Foreground="{DynamicResource MaterialDesignBody}"
+                            Click="SettingsTab_Click"
+                            Height="60">
+                            <StackPanel>
+                                <materialDesign:PackIcon Kind="Cog"
+                                                     HorizontalAlignment="Center"/>
+                                <TextBlock Text="설정"
+                                       HorizontalAlignment="Center"
+                                       FontSize="11"/>
+                            </StackPanel>
+                        </Button>
+
+                    </Grid>
+                </Border>
+
+            </Grid>
+        </Border>
+    </materialDesign:DialogHost>
+</Window>

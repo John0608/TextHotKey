@@ -12,7 +12,8 @@
         FontFamily="{materialDesign:MaterialDesignFont}"
         ResizeMode="NoResize"
         WindowStyle="None"
-        AllowsTransparency="True">
+        AllowsTransparency="True"
+        Icon="/favicon.ico">
 
     <Window.Resources>
         <Style x:Key="ThemeToggleButton" 

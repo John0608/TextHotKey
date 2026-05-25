@@ -7,13 +7,22 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
+		<ApplicationIcon>favicon.ico</ApplicationIcon>
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <None Remove="favicon.ico" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="InputSimulator" Version="1.0.4" />
 		<PackageReference Include="MaterialDesignColors" Version="5.3.2" />
 		<PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
 		<PackageReference Include="System.Text.Json" Version="11.0.0-preview.4.26230.115" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Resource Include="favicon.ico" />
 	</ItemGroup>
 	
 

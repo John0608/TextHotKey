@@ -1,4 +1,5 @@
 <Solution>
   <Folder Name="/솔루션 항목/" />
   <Project Path="TextHotKey/TextHotKey.csproj" />
+  <Project Path="TextHotkey_Updater/TextHotkey_Updater.csproj" Id="780916ae-808e-4851-b778-514502b7f834" />
 </Solution>

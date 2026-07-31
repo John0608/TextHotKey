@@ -123,7 +123,18 @@
                                       Margin="0,0,0,24"
                                       Checked="AutoStartCheckBox_Checked"
                                       Unchecked="AutoStartCheckBox_Unchecked"/>
+                                <CheckBox x:Name="AutoUpdateCheckBox"
+          Content="프로그램 시작 시 자동 업데이트"
+          Style="{StaticResource MaterialDesignCheckBox}"
+          Margin="0,0,0,16"
+          Checked="AutoUpdateCheckBox_Checked"
+          Unchecked="AutoUpdateCheckBox_Unchecked"/>
 
+                                <Button Content="업데이트 확인"
+        Style="{StaticResource MaterialDesignOutlinedButton}"
+        HorizontalAlignment="Left"
+        Margin="0,0,0,24"
+        Click="CheckUpdateButton_Click"/>
                                 <Separator Margin="0,0,0,24"/>
 
                                 <TextBlock Text="단축키 설정"
@@ -144,7 +155,7 @@
                                                             DisplayMemberBinding="{Binding Text}"/>
                                             <GridViewColumn Header="삭제" 
                                                             Width="60">
-                                            <GridViewColumn.CellTemplate>
+                                                <GridViewColumn.CellTemplate>
                                                     <DataTemplate>
                                                         <Button Style="{StaticResource MaterialDesignIconButton}"
                                                                 Width="24" 

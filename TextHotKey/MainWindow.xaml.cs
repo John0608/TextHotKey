@@ -56,11 +56,7 @@ namespace TextHotKey
                 if (id >= 0 && id < _hotkeyList.Count)
                 {
                     handled = true;
-                    var text = _hotkeyList[id].Text;
-                    Task.Delay(100).ContinueWith(_ =>
-                    {
-                        Dispatcher.Invoke(() => TypeText(text));
-                    });
+                    SendText(_hotkeyList[id].Text);
                 }
             }
             return IntPtr.Zero;
@@ -75,10 +71,132 @@ namespace TextHotKey
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
 
-        private void TypeText(string text)
+        // 설정된 텍스트를 단 한 번의 SendInput 호출로 즉시 입력한다.
+        // (문자마다 SendInput을 호출하던 기존 방식보다 훨씬 빠르고 글자 누락이 없다.)
+        private void SendText(string text)
         {
-            var sim = new WindowsInput.InputSimulator();
-            sim.Keyboard.TextEntry(text);
+            if (string.IsNullOrEmpty(text)) return;
+
+            var inputs = new List<INPUT>(text.Length * 2 + 3);
+
+            // 단축키 조합으로 눌려 있는 Ctrl/Alt/Shift를 먼저 떼어
+            // 텍스트가 조합키와 함께 입력되는 것을 방지한다. (기존 100ms 지연 대체)
+            AppendModifierRelease(inputs, VK_CONTROL);
+            AppendModifierRelease(inputs, VK_MENU);
+            AppendModifierRelease(inputs, VK_SHIFT);
+
+            // 각 문자를 유니코드 입력(KEYEVENTF_UNICODE)으로 변환해 배치에 담는다.
+            // 유니코드 입력은 키보드 레이아웃/조합키의 영향을 받지 않는다.
+            foreach (char c in text)
+            {
+                inputs.Add(MakeUnicodeInput(c, keyUp: false));
+                inputs.Add(MakeUnicodeInput(c, keyUp: true));
+            }
+
+            var array = inputs.ToArray();
+            SendInput((uint)array.Length, array, Marshal.SizeOf<INPUT>());
+        }
+
+        // 해당 수정 키가 눌려 있으면 keyup 이벤트를 배치에 추가한다.
+        private static void AppendModifierRelease(List<INPUT> inputs, int vk)
+        {
+            if ((GetAsyncKeyState(vk) & 0x8000) == 0) return;
+            inputs.Add(new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new InputUnion
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = (ushort)vk,
+                        wScan = 0,
+                        dwFlags = KEYEVENTF_KEYUP,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            });
+        }
+
+        // 문자 하나를 유니코드 keydown/keyup INPUT 구조체로 만든다.
+        private static INPUT MakeUnicodeInput(char c, bool keyUp)
+        {
+            uint flags = KEYEVENTF_UNICODE;
+            if (keyUp) flags |= KEYEVENTF_KEYUP;
+            return new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new InputUnion
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = 0,
+                        wScan = c,
+                        dwFlags = flags,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+        }
+
+        // SendInput 기반 고속 텍스트 입력 인터롭
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        private const uint INPUT_KEYBOARD = 1;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_UNICODE = 0x0004;
+
+        private const int VK_SHIFT = 0x10;
+        private const int VK_CONTROL = 0x11;
+        private const int VK_MENU = 0x12; // Alt
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct INPUT
+        {
+            public uint type;
+            public InputUnion u;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct InputUnion
+        {
+            [FieldOffset(0)] public MOUSEINPUT mi;
+            [FieldOffset(0)] public KEYBDINPUT ki;
+            [FieldOffset(0)] public HARDWAREINPUT hi;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYBDINPUT
+        {
+            public ushort wVk;
+            public ushort wScan;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MOUSEINPUT
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct HARDWAREINPUT
+        {
+            public uint uMsg;
+            public ushort wParamL;
+            public ushort wParamH;
         }
 
         // 단축키 등록

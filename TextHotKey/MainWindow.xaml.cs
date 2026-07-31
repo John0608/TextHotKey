@@ -336,21 +336,24 @@ namespace TextHotKey
 
         private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e)
         {
-            var curr = updateManager.GetCurrentVersion();
-            var latest = await updateManager.GetLatestVersion();
-            var checkUpdate = await updateManager.CheckForUpdates();
-            
-            if(checkUpdate)
-            {
-                var result = await ShowAlert($"새 버전이 있습니다. 업데이트 하시겠습니까?", "업데이트 확인");
-                if (result is true)
-                {
-                    await updateManager.StartUpdater();
-                }
+            var (available, current, latest, failed) = await updateManager.CheckAsync();
+            Logger.Info($"Update check - current: {current}, latest: {latest}, available: {available}, failed: {failed}");
 
+            if (failed)
+            {
+                await ShowAlert("업데이트 확인에 실패했습니다.\n네트워크 상태를 확인해주세요.", "업데이트 확인");
+                return;
             }
 
-            Logger.Info($"Current version: {curr}, Latest version: {latest}");
+            if (available)
+            {
+                var open = await ShowAlert($"새 버전 v{latest} 이(가) 있습니다. (현재 v{current})\n릴리스 페이지를 여시겠습니까?", "업데이트 확인");
+                if (open) updateManager.OpenReleasesPage();
+            }
+            else
+            {
+                await ShowAlert($"현재 최신 버전입니다. (v{current})", "업데이트 확인");
+            }
         }
 
         // 추가 팝업

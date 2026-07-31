@@ -71,12 +71,26 @@ namespace TextHotKey
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
 
-        // 설정된 텍스트를 단 한 번의 SendInput 호출로 즉시 입력한다.
-        // (문자마다 SendInput을 호출하던 기존 방식보다 훨씬 빠르고 글자 누락이 없다.)
+        // 이 길이 이상이면 클립보드 붙여넣기, 미만이면 키 입력으로 처리한다.
+        private const int ClipboardPasteThreshold = 20;
+
+        // 설정된 텍스트를 활성 창에 입력한다.
+        // - 짧은 텍스트: 유니코드 키 입력 (붙여넣기를 지원하지 않는 곳에서도 동작)
+        // - 긴 텍스트: 클립보드에 넣고 Ctrl+V로 한 번에 붙여넣기 (길이와 무관하게 즉시 삽입)
         private void SendText(string text)
         {
             if (string.IsNullOrEmpty(text)) return;
 
+            if (text.Length >= ClipboardPasteThreshold)
+                SendViaClipboard(text);
+            else
+                SendViaKeystrokes(text);
+        }
+
+        // 전체 문자열을 단 한 번의 SendInput 호출로 입력한다.
+        // (문자마다 SendInput을 호출하던 기존 방식보다 훨씬 빠르고 글자 누락이 없다.)
+        private void SendViaKeystrokes(string text)
+        {
             var inputs = new List<INPUT>(text.Length * 2 + 3);
 
             // 단축키 조합으로 눌려 있는 Ctrl/Alt/Shift를 먼저 떼어
@@ -92,6 +106,54 @@ namespace TextHotKey
                 inputs.Add(MakeUnicodeInput(c, keyUp: false));
                 inputs.Add(MakeUnicodeInput(c, keyUp: true));
             }
+
+            var array = inputs.ToArray();
+            SendInput((uint)array.Length, array, Marshal.SizeOf<INPUT>());
+        }
+
+        // 텍스트를 클립보드에 넣고 Ctrl+V로 붙여넣는다. 길이와 무관하게 즉시 삽입된다.
+        private void SendViaClipboard(string text)
+        {
+            // 기존 클립보드 텍스트를 백업했다가 붙여넣기 후 복원한다.
+            string? backup = null;
+            try { if (System.Windows.Clipboard.ContainsText()) backup = System.Windows.Clipboard.GetText(); }
+            catch { }
+
+            try
+            {
+                System.Windows.Clipboard.SetText(text);
+            }
+            catch
+            {
+                // 클립보드 사용 실패 시 키 입력 방식으로 대체한다.
+                SendViaKeystrokes(text);
+                return;
+            }
+
+            SendPaste();
+
+            // 대상 앱이 붙여넣기를 처리할 시간을 준 뒤 원래 클립보드를 복원한다.
+            if (backup != null)
+            {
+                var restore = backup;
+                Task.Delay(300).ContinueWith(_ =>
+                    Dispatcher.Invoke(() => { try { System.Windows.Clipboard.SetText(restore); } catch { } }));
+            }
+        }
+
+        // 눌려 있는 조합키를 모두 떼고 깨끗한 Ctrl+V를 전송한다.
+        private void SendPaste()
+        {
+            var inputs = new List<INPUT>(7);
+
+            AppendModifierRelease(inputs, VK_CONTROL);
+            AppendModifierRelease(inputs, VK_MENU);
+            AppendModifierRelease(inputs, VK_SHIFT);
+
+            inputs.Add(MakeVkInput(VK_CONTROL, keyUp: false));
+            inputs.Add(MakeVkInput(VK_V, keyUp: false));
+            inputs.Add(MakeVkInput(VK_V, keyUp: true));
+            inputs.Add(MakeVkInput(VK_CONTROL, keyUp: true));
 
             var array = inputs.ToArray();
             SendInput((uint)array.Length, array, Marshal.SizeOf<INPUT>());
@@ -140,6 +202,26 @@ namespace TextHotKey
             };
         }
 
+        // 가상 키 하나를 keydown 또는 keyup INPUT 구조체로 만든다.
+        private static INPUT MakeVkInput(int vk, bool keyUp)
+        {
+            return new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new InputUnion
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = (ushort)vk,
+                        wScan = 0,
+                        dwFlags = keyUp ? KEYEVENTF_KEYUP : 0,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+        }
+
         // SendInput 기반 고속 텍스트 입력 인터롭
         [DllImport("user32.dll", SetLastError = true)]
         private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -154,6 +236,7 @@ namespace TextHotKey
         private const int VK_SHIFT = 0x10;
         private const int VK_CONTROL = 0x11;
         private const int VK_MENU = 0x12; // Alt
+        private const int VK_V = 0x56;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct INPUT

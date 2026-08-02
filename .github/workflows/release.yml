@@ -1,11 +1,13 @@
 name: Release
 
-# v로 시작하는 태그를 푸시하면 자동으로 빌드하고 릴리스에 zip을 첨부한다.
+# v로 시작하는 태그를 푸시하면 자동으로 빌드하고 릴리스에 zip + 설치 파일을 첨부한다.
 #   예) git tag v1.2.0 && git push origin v1.2.0
+# workflow_dispatch로 수동 실행하면 릴리스 없이 산출물(zip/setup)만 아티팩트로 올려 확인할 수 있다.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write   # 릴리스 생성/자산 업로드에 필요
@@ -23,11 +25,22 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Derive version from tag
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Derive version
         id: ver
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}".TrimStart('v')
+          $ref = "${{ github.ref_name }}"
+          if ($ref -like 'v*') {
+            $v = $ref.TrimStart('v')
+          } else {
+            # 태그가 아닌 수동 실행: csproj의 <Version> 사용
+            [xml]$c = Get-Content TextHotKey/TextHotKey.csproj
+            $v = ($c.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+          }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "version=$v"
 
@@ -35,12 +48,24 @@ jobs:
         shell: pwsh
         run: ./build-release.ps1 -Version "${{ steps.ver.outputs.version }}"
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextHotKey-${{ steps.ver.outputs.version }}
+          path: |
+            publish/TextHotKey-win-x64.zip
+            publish/TextHotKey-Setup-*.exe
+          if-no-files-found: error
+
       - name: Create GitHub Release
+        # 태그 푸시일 때만 릴리스를 만든다(수동 실행은 아티팩트 확인용).
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ github.ref_name }}" `
             "publish/TextHotKey-win-x64.zip" `
+            "publish/TextHotKey-Setup-${{ steps.ver.outputs.version }}.exe" `
             --title "${{ github.ref_name }}" `
             --generate-notes

@@ -62,8 +62,12 @@ CloseApplications=yes
 RestartApplications=no
 AppMutex=TextHotKey_SingleInstance_Mutex
 
+[Languages]
+; 한국어 마법사. Korean.isl은 Inno Setup 6.5+에 기본 번들로 포함된다.
+Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
+
 [Tasks]
-Name: "desktopicon"; Description: "바탕화면에 바로가기 만들기"; GroupDescription: "추가 아이콘:"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -73,7 +77,7 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExe}"; Description: "TextHotKey 실행"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Registry]
 ; 설치 시엔 건드리지 않고(dontcreatekey), 제거 시 자동시작 항목과 앱 설정 키를 정리한다.

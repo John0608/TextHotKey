@@ -357,13 +357,13 @@ namespace TextHotKey
 
             if (info.Failed)
             {
-                await ShowAlert("업데이트 확인에 실패했습니다.\n네트워크 상태를 확인해주세요.", "업데이트 확인");
+                await ShowAlert("업데이트 확인에 실패했습니다.\n네트워크 상태를 확인해주세요.", "업데이트 확인", confirm: false);
                 return;
             }
 
             if (!info.UpdateAvailable)
             {
-                await ShowAlert($"현재 최신 버전입니다. (v{info.Current})", "업데이트 확인");
+                await ShowAlert($"현재 최신 버전입니다. (v{info.Current})", "업데이트 확인", confirm: false);
                 return;
             }
 
@@ -381,7 +381,7 @@ namespace TextHotKey
             // 자동 설치용 zip 에셋이 없으면 릴리스 페이지로 안내(수동 설치).
             if (string.IsNullOrEmpty(info.DownloadUrl))
             {
-                await ShowAlert("자동 설치 패키지를 찾지 못했습니다.\n릴리스 페이지에서 직접 받아주세요.", "업데이트");
+                await ShowAlert("자동 설치 패키지를 찾지 못했습니다.\n릴리스 페이지에서 직접 받아주세요.", "업데이트", confirm: false);
                 updateManager.OpenReleasesPage();
                 return;
             }
@@ -395,7 +395,7 @@ namespace TextHotKey
 
                 if (!updateManager.StartUpdater(zipPath))
                 {
-                    await ShowAlert("업데이터를 실행하지 못했습니다.\n릴리스 페이지에서 직접 받아주세요.", "업데이트");
+                    await ShowAlert("업데이터를 실행하지 못했습니다.\n릴리스 페이지에서 직접 받아주세요.", "업데이트", confirm: false);
                     updateManager.OpenReleasesPage();
                     return;
                 }
@@ -406,7 +406,7 @@ namespace TextHotKey
             catch (Exception ex)
             {
                 Logger.Error($"Update install failed: {ex.Message}");
-                await ShowAlert("업데이트 중 오류가 발생했습니다.\n" + ex.Message, "업데이트");
+                await ShowAlert("업데이트 중 오류가 발생했습니다.\n" + ex.Message, "업데이트", confirm: false);
             }
         }
 
@@ -608,7 +608,9 @@ namespace TextHotKey
                 key?.DeleteValue("TextHotKey", false);
         }
 
-        private async Task<bool> ShowAlert(string message, string title = "알림")
+        // confirm=true  : 네/아니요 두 버튼(예: "지금 업데이트할까요?"). 반환값 = 네 선택 여부.
+        // confirm=false : 확인 한 버튼짜리 단순 알림(예: "현재 최신 버전입니다").
+        private async Task<bool> ShowAlert(string message, string title = "알림", bool confirm = true)
         {
             var view = new StackPanel { Margin = new Thickness(16), Width = 250 };
 
@@ -631,23 +633,37 @@ namespace TextHotKey
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Right
             };
 
-            var cancelBtn = new System.Windows.Controls.Button
+            if (confirm)
             {
-                Content = "아니요",
-                Style = (Style)FindResource("MaterialDesignFlatButton"),
-                Margin = new Thickness(0, 0, 8, 0)
-            };
-            cancelBtn.Click += (s, e) => DialogHost.Close("RootDialog", false);
+                var cancelBtn = new System.Windows.Controls.Button
+                {
+                    Content = "아니요",
+                    Style = (Style)FindResource("MaterialDesignFlatButton"),
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+                cancelBtn.Click += (s, e) => DialogHost.Close("RootDialog", false);
 
-            var btn = new System.Windows.Controls.Button
+                var okBtn = new System.Windows.Controls.Button
+                {
+                    Content = "네",
+                    Style = (Style)FindResource("MaterialDesignRaisedButton"),
+                };
+                okBtn.Click += (s, e) => DialogHost.Close("RootDialog", true);
+
+                buttons.Children.Add(okBtn);
+                buttons.Children.Add(cancelBtn);
+            }
+            else
             {
-                Content = "네",
-                Style = (Style)FindResource("MaterialDesignRaisedButton"),
-            };
-            btn.Click += (s, e) => DialogHost.Close("RootDialog", true);
+                var okBtn = new System.Windows.Controls.Button
+                {
+                    Content = "확인",
+                    Style = (Style)FindResource("MaterialDesignRaisedButton"),
+                };
+                okBtn.Click += (s, e) => DialogHost.Close("RootDialog", true);
 
-            buttons.Children.Add(btn);
-            buttons.Children.Add(cancelBtn);
+                buttons.Children.Add(okBtn);
+            }
             view.Children.Add(buttons);
 
             var result = await DialogHost.Show(view, "RootDialog");

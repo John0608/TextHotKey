@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- 콘솔 창을 띄우지 않는 헬퍼(로그는 파일로 기록). -->
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<RootNamespace>Updater</RootNamespace>
+		<AssemblyName>Updater</AssemblyName>
+		<Version>1.1.0</Version>
+		<!-- 단일 파일 자체 포함 publish 시 압축을 켜 용량을 줄인다. -->
+		<EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+	</PropertyGroup>
+
+</Project>

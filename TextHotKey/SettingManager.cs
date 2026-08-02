@@ -1,0 +1,79 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+
+namespace TextHotKey
+{
+    class SettingManager
+    {
+        private static readonly string SavePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "TextHotKey", "settings.json");
+
+        private Dictionary<string, object> _settings = new();
+
+        public SettingManager()
+        {
+            Load();
+        }
+
+        public void SetAutoUpdate(bool status)
+        {
+            Set("AutoUpdate", status);
+        }
+
+        public bool GetAutoUpdate()
+        {
+            return Get("AutoUpdate", false);
+        }
+
+        public void SetTheme(string theme)
+        {
+            Set("Theme", theme);
+        }
+
+        public bool GetTheme()
+        {
+            return Get("Theme", "Dark") == "Dark";
+        }
+
+        public T Get<T>(string key, T defaultValue)
+        {
+            if (_settings.TryGetValue(key, out var value))
+            {
+                try
+                {
+                    if (value is JsonElement element)
+                        return element.Deserialize<T>() ?? defaultValue;
+                    return (T)Convert.ChangeType(value, typeof(T));
+                }
+                catch { }
+            }
+            return defaultValue;
+        }
+
+        public void Set<T>(string key, T value)
+        {
+            _settings[key] = value!;
+            Save();
+        }
+
+        private void Load()
+        {
+            if (!File.Exists(SavePath)) return;
+            var json = File.ReadAllText(SavePath);
+            _settings = JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
+        }
+
+        private void Save()
+        {
+            var dir = Path.GetDirectoryName(SavePath)!;
+            if (!Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            File.WriteAllText(SavePath, JsonSerializer.Serialize(_settings));
+        }
+
+    }
+}

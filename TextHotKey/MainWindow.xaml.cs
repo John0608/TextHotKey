@@ -2,42 +2,43 @@
 using Microsoft.Win32;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Media;
-using WinForms = System.Windows.Forms;
 
 namespace TextHotKey
 {
     public partial class MainWindow : Window
     {
-        private List<HotkeyItem> _hotkeyList = new List<HotkeyItem>();
         private bool _isActive = false;
-
-        // Win32 API
-        [DllImport("user32.dll")]
-        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-
-        [DllImport("user32.dll")]
-        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-        [DllImport("user32.dll")]
-        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-
-        private const uint MOD_ALT = 0x0001;
-        private const uint MOD_CTRL = 0x0002;
-        private const uint MOD_SHIFT = 0x0004;
+        private readonly HotkeyManager _hotkeyManager = new HotkeyManager();
+        private readonly SettingManager settingManager = new SettingManager();
+        private readonly UpdateManager updateManager = new UpdateManager();
 
         public MainWindow()
         {
             InitializeComponent();
-            HotkeyListView.ItemsSource = _hotkeyList;
+            HotkeyListView.ItemsSource = _hotkeyManager.HotkeyList;
             AutoStartCheckBox.IsChecked = IsAutoStartEnabled();
-            ThemeToggle.IsChecked = true;
-            LoadHotkeys();
+            ThemeToggle.IsChecked = settingManager.GetTheme();
+            AutoUpdateCheckBox.IsChecked = settingManager.GetAutoUpdate();
+
+            // "프로그램 시작 시 자동 업데이트"가 켜져 있으면 시작 직후 조용히 확인한다.
+            Loaded += MainWindow_Loaded;
+        }
+
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (!settingManager.GetAutoUpdate()) return;
+
+            var info = await updateManager.CheckAsync();
+            Logger.Info($"Startup update check - current:{info.Current}, latest:{info.Latest}, available:{info.UpdateAvailable}, failed:{info.Failed}");
+
+            // 시작 시엔 실패/최신이면 조용히 넘어가고, 새 버전이 있을 때만 안내한다.
+            if (info.Failed || !info.UpdateAvailable) return;
+
+            await PromptAndInstallAsync(info);
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -53,23 +54,16 @@ namespace TextHotKey
             if (msg == 0x0312 && _isActive)
             {
                 int id = wParam.ToInt32();
-                if (id >= 0 && id < _hotkeyList.Count)
+                if (id >= 0 && id < _hotkeyManager.HotkeyList.Count)
                 {
                     handled = true;
-                    SendText(_hotkeyList[id].Text);
+                    SendText(_hotkeyManager.HotkeyList[id].Text);
                 }
             }
             return IntPtr.Zero;
         }
 
         // 텍스트 입력
-
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetForegroundWindow();
 
         // 이 길이 이상이면 클립보드 붙여넣기, 미만이면 키 입력으로 처리한다.
         private const int ClipboardPasteThreshold = 20;
@@ -282,49 +276,6 @@ namespace TextHotKey
             public ushort wParamH;
         }
 
-        // 단축키 등록
-        private void RegisterAllHotkeys()
-        {
-            var handle = new WindowInteropHelper(this).Handle;
-            for (int i = 0; i < _hotkeyList.Count; i++)
-            {
-                var item = _hotkeyList[i];
-                var (modifiers, vk) = ParseHotkey(item.Hotkey);
-                bool success = RegisterHotKey(handle, i, modifiers, vk);
-            }
-        }
-
-        // 단축키 해제
-        private void UnregisterAllHotkeys()
-        {
-            var handle = new WindowInteropHelper(this).Handle;
-            for (int i = 0; i < _hotkeyList.Count; i++)
-                UnregisterHotKey(handle, i);
-        }
-
-        // 단축키 파싱 (예: "Ctrl+Alt+A")
-        private (uint modifiers, uint vk) ParseHotkey(string hotkey)
-        {
-            uint modifiers = 0;
-            uint vk = 0;
-            var parts = hotkey.Split('+');
-
-            foreach (var part in parts)
-            {
-                switch (part.Trim().ToUpper())
-                {
-                    case "CTRL": modifiers |= MOD_CTRL; break;
-                    case "ALT": modifiers |= MOD_ALT; break;
-                    case "SHIFT": modifiers |= MOD_SHIFT; break;
-                    default:
-                        if (Enum.TryParse<Key>(part.Trim(), true, out var key))
-                            vk = (uint)KeyInterop.VirtualKeyFromKey(key);
-                        break;
-                }
-            }
-            return (modifiers, vk);
-        }
-
         // 타이틀바 드래그
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -340,7 +291,7 @@ namespace TextHotKey
         // 닫기
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            UnregisterAllHotkeys();
+            _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
             Close();
         }
 
@@ -351,6 +302,8 @@ namespace TextHotKey
             var theme = paletteHelper.GetTheme();
             theme.SetBaseTheme(BaseTheme.Dark);
             paletteHelper.SetTheme(theme);
+            
+            settingManager.SetTheme("Dark");
         }
 
         private void ThemeToggle_Unchecked(object sender, RoutedEventArgs e)
@@ -359,19 +312,21 @@ namespace TextHotKey
             var theme = paletteHelper.GetTheme();
             theme.SetBaseTheme(BaseTheme.Light);
             paletteHelper.SetTheme(theme);
+
+            settingManager.SetTheme("Light");
         }
 
         // 활성화 토글
         private void ActivateToggle_Checked(object sender, RoutedEventArgs e)
         {
             _isActive = true;
-            RegisterAllHotkeys();
+            _hotkeyManager.RegisterAll(new WindowInteropHelper(this).Handle);
         }
 
         private void ActivateToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             _isActive = false;
-            UnregisterAllHotkeys();
+            _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
         }
 
         // 자동 시작
@@ -383,6 +338,139 @@ namespace TextHotKey
         private void AutoStartCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             SetAutoStart(false);
+        }
+
+        private void AutoUpdateCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            settingManager.SetAutoUpdate(true);
+        }
+
+        private void AutoUpdateCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            settingManager.SetAutoUpdate(false);
+        }
+
+        private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e)
+        {
+            var info = await updateManager.CheckAsync();
+            Logger.Info($"Update check - current:{info.Current}, latest:{info.Latest}, available:{info.UpdateAvailable}, failed:{info.Failed}");
+
+            if (info.Failed)
+            {
+                await ShowAlert("업데이트 확인에 실패했습니다.\n네트워크 상태를 확인해주세요.", "업데이트 확인");
+                return;
+            }
+
+            if (!info.UpdateAvailable)
+            {
+                await ShowAlert($"현재 최신 버전입니다. (v{info.Current})", "업데이트 확인");
+                return;
+            }
+
+            await PromptAndInstallAsync(info);
+        }
+
+        // 새 버전 안내 → 동의 시 다운로드 → 앱 종료 → 업데이터가 교체·재실행.
+        private async Task PromptAndInstallAsync(UpdateInfo info)
+        {
+            var ok = await ShowAlert(
+                $"새 버전 v{info.Latest} 이(가) 있습니다. (현재 v{info.Current})\n지금 업데이트할까요?",
+                "업데이트");
+            if (!ok) return;
+
+            // 자동 설치용 zip 에셋이 없으면 릴리스 페이지로 안내(수동 설치).
+            if (string.IsNullOrEmpty(info.DownloadUrl))
+            {
+                await ShowAlert("자동 설치 패키지를 찾지 못했습니다.\n릴리스 페이지에서 직접 받아주세요.", "업데이트");
+                updateManager.OpenReleasesPage();
+                return;
+            }
+
+            try
+            {
+                var zipPath = Path.Combine(Path.GetTempPath(), "TextHotKey_update", "update.zip");
+
+                var downloaded = await ShowDownloadDialogAsync(info.DownloadUrl, zipPath);
+                if (!downloaded) return; // 사용자가 취소
+
+                if (!updateManager.StartUpdater(zipPath))
+                {
+                    await ShowAlert("업데이터를 실행하지 못했습니다.\n릴리스 페이지에서 직접 받아주세요.", "업데이트");
+                    updateManager.OpenReleasesPage();
+                    return;
+                }
+
+                // 업데이터가 앱 종료를 기다렸다가 파일을 교체하고 다시 실행한다.
+                System.Windows.Application.Current.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Update install failed: {ex.Message}");
+                await ShowAlert("업데이트 중 오류가 발생했습니다.\n" + ex.Message, "업데이트");
+            }
+        }
+
+        // 다운로드 진행률 다이얼로그. 완료 시 true, 취소 시 false. 오류는 예외로 전달.
+        private async Task<bool> ShowDownloadDialogAsync(string url, string zipPath)
+        {
+            var view = new StackPanel { Margin = new Thickness(16), Width = 300 };
+
+            view.Children.Add(new TextBlock
+            {
+                Text = "업데이트 다운로드 중...",
+                Style = (Style)FindResource("MaterialDesignHeadline6TextBlock"),
+                Margin = new Thickness(0, 0, 0, 16)
+            });
+
+            var bar = new System.Windows.Controls.ProgressBar { Minimum = 0, Maximum = 100, Value = 0, Height = 8 };
+            view.Children.Add(bar);
+
+            var pct = new TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 16) };
+            view.Children.Add(pct);
+
+            var cts = new CancellationTokenSource();
+            var cancelBtn = new System.Windows.Controls.Button
+            {
+                Content = "취소",
+                Style = (Style)FindResource("MaterialDesignFlatButton"),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+            };
+            cancelBtn.Click += (s, e) => cts.Cancel();
+            view.Children.Add(cancelBtn);
+
+            var progress = new Progress<double>(p =>
+            {
+                bar.Value = p * 100;
+                pct.Text = $"{p * 100:0}%";
+            });
+
+            bool success = false;
+            Exception? error = null;
+
+            await DialogHost.Show(view, "RootDialog", async (object s, DialogOpenedEventArgs args) =>
+            {
+                try
+                {
+                    await updateManager.DownloadAsync(url, zipPath, progress, cts.Token);
+                    success = true;
+                }
+                catch (OperationCanceledException)
+                {
+                    // 사용자 취소 → 부분 파일 정리.
+                    try { File.Delete(zipPath); } catch { /* 무시 */ }
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                }
+                finally
+                {
+                    args.Session.Close(false);
+                }
+            });
+
+            if (error != null) throw error;
+            return success;
         }
 
         // 추가 팝업
@@ -471,18 +559,10 @@ namespace TextHotKey
                 !string.IsNullOrWhiteSpace(hotkeyBox.Text) &&
                 !string.IsNullOrWhiteSpace(textBox.Text))
             {
-                // 활성화 중이면 기존 단축키 해제 후 재등록
-                if (_isActive) UnregisterAllHotkeys();
-
-                _hotkeyList.Add(new HotkeyItem
-                {
-                    Hotkey = hotkeyBox.Text,
-                    Text = textBox.Text
-                });
+                _hotkeyManager.Add(
+                    new WindowInteropHelper(this).Handle,
+                    new HotkeyItem { Hotkey = hotkeyBox.Text, Text = textBox.Text });
                 HotkeyListView.Items.Refresh();
-                SaveHotkeys();
-
-                if (_isActive) RegisterAllHotkeys();
             }
         }
 
@@ -491,11 +571,8 @@ namespace TextHotKey
         {
             if (sender is System.Windows.Controls.Button btn && btn.Tag is HotkeyItem item)
             {
-                if (_isActive) UnregisterAllHotkeys();
-                _hotkeyList.Remove(item);
+                _hotkeyManager.Remove(new WindowInteropHelper(this).Handle, item);
                 HotkeyListView.Items.Refresh();
-                SaveHotkeys(); 
-                if (_isActive) RegisterAllHotkeys();
             }
         }
 
@@ -523,7 +600,7 @@ namespace TextHotKey
         private void SetAutoStart(bool enable)
         {
             using var key = Registry.CurrentUser.OpenSubKey(
-       @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
             if (enable)
                 key?.SetValue("TextHotKey",
                     System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName);
@@ -531,41 +608,50 @@ namespace TextHotKey
                 key?.DeleteValue("TextHotKey", false);
         }
 
-        // 저장 경로
-        private static readonly string SavePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "TextHotKey", "hotkeys.json");
-
-        // 저장
-        private void SaveHotkeys()
+        private async Task<bool> ShowAlert(string message, string title = "알림")
         {
-            var dir = Path.GetDirectoryName(SavePath)!;
-            if (!Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
+            var view = new StackPanel { Margin = new Thickness(16), Width = 250 };
 
-            var json = JsonSerializer.Serialize(_hotkeyList);
-            File.WriteAllText(SavePath, json);
-        }
-
-        // 불러오기
-        private void LoadHotkeys()
-        {
-            if (!File.Exists(SavePath)) return;
-
-            var json = File.ReadAllText(SavePath);
-            var list = JsonSerializer.Deserialize<List<HotkeyItem>>(json);
-            if (list != null)
+            view.Children.Add(new TextBlock
             {
-                _hotkeyList.Clear();
-                _hotkeyList.AddRange(list);
-                HotkeyListView.Items.Refresh();
-            }
-        }
-    }
+                Text = title,
+                Style = (Style)FindResource("MaterialDesignHeadline6TextBlock"),
+                Margin = new Thickness(0, 0, 0, 8)
+            });
 
-    public class HotkeyItem
-    {
-        public string Hotkey { get; set; } = string.Empty;
-        public string Text { get; set; } = string.Empty;
+            view.Children.Add(new TextBlock
+            {
+                Text = message,
+                Margin = new Thickness(0, 0, 0, 16)
+            });
+
+            var buttons = new StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+            };
+
+            var cancelBtn = new System.Windows.Controls.Button
+            {
+                Content = "아니요",
+                Style = (Style)FindResource("MaterialDesignFlatButton"),
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            cancelBtn.Click += (s, e) => DialogHost.Close("RootDialog", false);
+
+            var btn = new System.Windows.Controls.Button
+            {
+                Content = "네",
+                Style = (Style)FindResource("MaterialDesignRaisedButton"),
+            };
+            btn.Click += (s, e) => DialogHost.Close("RootDialog", true);
+
+            buttons.Children.Add(btn);
+            buttons.Children.Add(cancelBtn);
+            view.Children.Add(buttons);
+
+            var result = await DialogHost.Show(view, "RootDialog");
+            return result is true;
+        }
     }
 }

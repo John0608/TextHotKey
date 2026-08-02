@@ -1,3 +1,6 @@
+using Microsoft.Win32;
+using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Windows;
 
@@ -11,9 +14,11 @@ namespace TextHotKey
         // 세션 단위(Local\) 이름 — 같은 사용자 세션에서의 중복 실행을 막는다.
         private const string MutexName = "TextHotKey_SingleInstance_Mutex";
         private const string ShowEventName = "TextHotKey_SingleInstance_ShowEvent";
+        private const string RegKey = @"SOFTWARE\TextHotKey";
 
         private Mutex? _instanceMutex;
         private EventWaitHandle? _showEvent;
+        private readonly UpdateManager _updateManager = new UpdateManager();
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -52,6 +57,9 @@ namespace TextHotKey
 
             base.OnStartup(e);
 
+            // 설치 경로/버전을 레지스트리에 기록 (업데이터가 참조).
+            RegisterInstallPath();
+
             // StartupUri 대신 첫 인스턴스에서만 메인 창을 직접 생성한다.
             var mainWindow = new MainWindow();
             MainWindow = mainWindow;
@@ -73,6 +81,20 @@ namespace TextHotKey
             window.Topmost = true;
             window.Topmost = false;
             window.Focus();
+        }
+
+        // 설치 경로/폴더/버전/업데이터 경로를 레지스트리에 기록한다.
+        private void RegisterInstallPath()
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RegKey);
+            var currentPath = Process.GetCurrentProcess().MainModule!.FileName;
+            var installDir = Path.GetDirectoryName(currentPath)!;
+            var currVersion = _updateManager.GetCurrentVersion();
+
+            key?.SetValue("InstallPath", currentPath);        // 실행 파일 경로
+            key?.SetValue("InstallDir", installDir);           // 설치 폴더 경로
+            key?.SetValue("Version", currVersion);             // 현재 버전
+            key?.SetValue("UpdaterPath", Path.Combine(installDir, "Updater.exe")); // 업데이터 경로
         }
 
         protected override void OnExit(ExitEventArgs e)

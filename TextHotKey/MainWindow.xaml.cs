@@ -474,94 +474,15 @@ namespace TextHotKey
         }
 
         // 추가 팝업
-        private async void AddButton_Click(object sender, RoutedEventArgs e)
+        private void AddButton_Click(object sender, RoutedEventArgs e)
         {
-            var view = new StackPanel { Margin = new Thickness(16), Width = 300 };
-
-            var title = new TextBlock
-            {
-                Text = "단축키 추가",
-                Style = (Style)FindResource("MaterialDesignHeadline6TextBlock"),
-                Margin = new Thickness(0, 0, 0, 16)
-            };
-
-            var hotkeyBox = new System.Windows.Controls.TextBox
-            {
-                Style = (Style)FindResource("MaterialDesignOutlinedTextBox"),
-                Margin = new Thickness(0, 0, 0, 8),
-                IsReadOnly = true
-            };
-            HintAssist.SetHint(hotkeyBox, "클릭 후 단축키를 누르세요");
-
-            hotkeyBox.PreviewKeyDown += (s, args) =>
-            {
-                args.Handled = true;
-                var keys = new List<string>();
-
-                if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl))
-                    keys.Add("Ctrl");
-                if (Keyboard.IsKeyDown(Key.LeftAlt) || Keyboard.IsKeyDown(Key.RightAlt))
-                    keys.Add("Alt");
-                if (Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift))
-                    keys.Add("Shift");
-
-                if (args.Key != Key.LeftCtrl && args.Key != Key.RightCtrl &&
-                    args.Key != Key.LeftAlt && args.Key != Key.RightAlt &&
-                    args.Key != Key.LeftShift && args.Key != Key.RightShift &&
-                    args.Key != Key.System)
-                {
-                    keys.Add(args.Key.ToString());
-                }
-
-                if (keys.Count > 0)
-                    hotkeyBox.Text = string.Join("+", keys);
-            };
-
-            var textBox = new System.Windows.Controls.TextBox
-            {
-                Style = (Style)FindResource("MaterialDesignOutlinedTextBox"),
-                Margin = new Thickness(0, 0, 0, 16)
-            };
-            HintAssist.SetHint(textBox, "입력될 텍스트");
-
-            var buttons = new StackPanel
-            {
-                Orientation = System.Windows.Controls.Orientation.Horizontal,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
-            };
-
-            var cancelBtn = new System.Windows.Controls.Button
-            {
-                Content = "취소",
-                Style = (Style)FindResource("MaterialDesignFlatButton"),
-                Margin = new Thickness(0, 0, 8, 0)
-            };
-            cancelBtn.Click += (s, args) => DialogHost.Close("RootDialog", false);
-
-            var confirmBtn = new System.Windows.Controls.Button
-            {
-                Content = "추가",
-                Style = (Style)FindResource("MaterialDesignRaisedButton")
-            };
-            confirmBtn.Click += (s, args) => DialogHost.Close("RootDialog", true);
-
-            buttons.Children.Add(cancelBtn);
-            buttons.Children.Add(confirmBtn);
-
-            view.Children.Add(title);
-            view.Children.Add(hotkeyBox);
-            view.Children.Add(textBox);
-            view.Children.Add(buttons);
-
-            var result = await DialogHost.Show(view, "RootDialog");
-
-            if (result is true &&
-                !string.IsNullOrWhiteSpace(hotkeyBox.Text) &&
-                !string.IsNullOrWhiteSpace(textBox.Text))
+            // DialogHost(Popup)는 한글 IME 조합이 깨지므로 실제 모달 Window로 입력받는다.
+            var dialog = new AddHotkeyWindow { Owner = this };
+            if (dialog.ShowDialog() == true)
             {
                 _hotkeyManager.Add(
                     new WindowInteropHelper(this).Handle,
-                    new HotkeyItem { Hotkey = hotkeyBox.Text, Text = textBox.Text });
+                    new HotkeyItem { Hotkey = dialog.HotkeyText, Text = dialog.InputText });
                 HotkeyListView.Items.Refresh();
             }
         }

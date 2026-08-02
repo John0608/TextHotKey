@@ -1,0 +1,46 @@
+name: Release
+
+# v로 시작하는 태그를 푸시하면 자동으로 빌드하고 릴리스에 zip을 첨부한다.
+#   예) git tag v1.2.0 && git push origin v1.2.0
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 릴리스 생성/자산 업로드에 필요
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "version=$v"
+
+      - name: Build release package
+        shell: pwsh
+        run: ./build-release.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "publish/TextHotKey-win-x64.zip" `
+            --title "${{ github.ref_name }}" `
+            --generate-notes

@@ -250,15 +250,47 @@ namespace TextHotKey
         // 설정된 텍스트를 활성 창에 입력한다.
         // - 짧은 텍스트: 유니코드 키 입력 (붙여넣기를 지원하지 않는 곳에서도 동작)
         // - 긴 텍스트: 클립보드에 넣고 Ctrl+V로 한 번에 붙여넣기 (길이와 무관하게 즉시 삽입)
-        private void SendText(string text)
+        //
+        // 단축키 조합키(Ctrl/Alt/Shift)가 아직 눌린 상태에서 텍스트를 주입하면,
+        // 일부 웹 입력창에서 곧이어 누른 Enter에 방금 넣은 텍스트가 지워지는 레이스가 있었다.
+        // 그래서 조합키가 모두 떼어질 때까지(최대 500ms) 기다린 뒤 주입한다.
+        // async/await로 UI 스레드를 막지 않고 대기하므로, 대기 중에도 키 입력 메시지가 정상 처리된다.
+        private async void SendText(string text)
         {
             if (string.IsNullOrEmpty(text)) return;
 
-            if (text.Length >= ClipboardPasteThreshold)
-                SendViaClipboard(text);
-            else
-                SendViaKeystrokes(text);
+            try
+            {
+                await WaitForModifiersReleasedAsync();
+
+                if (text.Length >= ClipboardPasteThreshold)
+                    SendViaClipboard(text);
+                else
+                    SendViaKeystrokes(text);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"SendText failed: {ex.Message}");
+            }
         }
+
+        // 눌려 있는 Ctrl/Alt/Shift가 모두 떼어질 때까지 짧게 폴링하며 기다린다(최대 maxWaitMs).
+        // 조합키가 없으면 즉시 반환하므로 단축키에 조합키가 없을 때는 지연이 없다.
+        private static async Task WaitForModifiersReleasedAsync(int maxWaitMs = 500)
+        {
+            const int stepMs = 15;
+            int waited = 0;
+            while (waited < maxWaitMs && AnyModifierDown())
+            {
+                await Task.Delay(stepMs);
+                waited += stepMs;
+            }
+        }
+
+        private static bool AnyModifierDown()
+            => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
+            || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0
+            || (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
         // 전체 문자열을 단 한 번의 SendInput 호출로 입력한다.
         // (문자마다 SendInput을 호출하던 기존 방식보다 훨씬 빠르고 글자 누락이 없다.)

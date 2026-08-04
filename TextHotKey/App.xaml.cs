@@ -72,10 +72,10 @@ namespace TextHotKey
             var window = MainWindow;
             if (window == null) return;
 
+            // 트레이로 숨은(Hide) 창은 먼저 Show() 한 뒤 최소화를 풀어야 확실히 복원된다.
+            window.Show();
             if (window.WindowState == WindowState.Minimized)
                 window.WindowState = WindowState.Normal;
-
-            window.Show();
             window.Activate();
             // 잠깐 Topmost를 켰다 꺼서 확실히 포그라운드로 끌어올린다.
             window.Topmost = true;

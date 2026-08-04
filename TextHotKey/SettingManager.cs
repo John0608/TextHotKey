@@ -29,6 +29,17 @@ namespace TextHotKey
             return Get("AutoUpdate", false);
         }
 
+        // 테스트(베타) 버전 받기 옵션(승인된 기기에서만 실제 적용).
+        public void SetBetaOptIn(bool status)
+        {
+            Set("BetaOptIn", status);
+        }
+
+        public bool GetBetaOptIn()
+        {
+            return Get("BetaOptIn", false);
+        }
+
         public void SetTheme(string theme)
         {
             Set("Theme", theme);

@@ -11,6 +11,11 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
 #endif
+; VersionInfoVersion용 숫자 버전(X.Y.Z[.N]). 베타는 표시용 MyAppVersion이
+; "1.3.0-beta.2" 처럼 숫자가 아니므로 별도 숫자 버전을 받는다.
+#ifndef VersionInfo
+  #define VersionInfo MyAppVersion
+#endif
 #ifndef AppDir
   #define AppDir "..\publish\app"
 #endif
@@ -35,7 +40,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#VersionInfo}
 
 ; 관리자 권한 없이 사용자 폴더에 설치한다.
 PrivilegesRequired=lowest

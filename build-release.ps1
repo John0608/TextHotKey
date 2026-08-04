@@ -17,9 +17,11 @@
 param(
     [string]$Configuration = 'Release',
     [string]$Rid = 'win-x64',
-    # 지정 시 어셈블리 버전을 이 값으로 덮어쓴다(예: 태그 v1.2.0 → "1.2.0").
+    # 어셈블리 버전(numeric). 안정판은 X.Y.Z, 베타는 X.Y.Z.N(= X.Y.Z-beta.N).
     # 비우면 csproj의 <Version>을 사용한다.
-    [string]$Version = ''
+    [string]$Version = '',
+    # 설치본 파일명/표시에 쓸 사람용 버전(예: 1.3.0-beta.2). 비우면 $Version 사용.
+    [string]$DisplayVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,6 +40,9 @@ if ($appVer -eq '') {
     $appVer = ($csproj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
     if (-not $appVer) { $appVer = '0.0.0' }
 }
+
+# 설치본 표시 버전(사람용). 지정 없으면 numeric과 동일.
+$displayVer = if ($DisplayVersion -ne '') { $DisplayVersion } else { $appVer }
 
 $publishRoot = Join-Path $root 'publish'
 $outApp      = Join-Path $publishRoot 'app'
@@ -85,13 +90,14 @@ $setupExe = $null
 if ($iscc) {
     $iss = Join-Path $root 'installer\TextHotKey.iss'
     & $iscc `
-        "/DMyAppVersion=$appVer" `
+        "/DMyAppVersion=$displayVer" `
+        "/DVersionInfo=$appVer" `
         "/DAppDir=$outApp" `
         "/DOutputDir=$publishRoot" `
         "/DIconFile=$(Join-Path $root 'TextHotKey\favicon.ico')" `
         $iss
     if ($LASTEXITCODE -ne 0) { throw '설치 마법사 빌드 실패' }
-    $setupExe = Join-Path $publishRoot "TextHotKey-Setup-$appVer.exe"
+    $setupExe = Join-Path $publishRoot "TextHotKey-Setup-$displayVer.exe"
 } else {
     Write-Host 'ISCC.exe(Inno Setup)를 찾지 못해 설치 마법사는 건너뜁니다. (zip만 생성)' -ForegroundColor Yellow
     Write-Host '설치: winget install JRSoftware.InnoSetup  또는  choco install innosetup' -ForegroundColor Yellow

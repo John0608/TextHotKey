@@ -1,44 +1,71 @@
-<Window x:Class="TextHotKey.AddHotkeyWindow"
+<ui:FluentWindow x:Class="TextHotKey.AddHotkeyWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         Title="단축키 추가"
         Width="340"
         SizeToContent="Height"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
-        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
-        Background="{DynamicResource MaterialDesignPaper}"
-        FontFamily="{materialDesign:MaterialDesignFont}">
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        WindowCornerPreference="Round">
 
-    <!-- DialogHost(Popup) 대신 실제 Window를 써서 한글 IME 조합이 정상 동작하게 한다. -->
-    <StackPanel Margin="16">
-        <TextBlock Text="단축키 추가"
-                   Style="{StaticResource MaterialDesignHeadline6TextBlock}"
-                   Margin="0,0,0,16"/>
+    <ui:FluentWindow.Resources>
+        <Style x:Key="Keycap" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorSecondaryBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="5" />
+            <Setter Property="Padding" Value="7,2" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </ui:FluentWindow.Resources>
 
-        <TextBox x:Name="HotkeyBox"
-                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                 materialDesign:HintAssist.Hint="클릭 후 단축키를 누르세요"
-                 IsReadOnly="True"
-                 Margin="0,0,0,8"
-                 PreviewKeyDown="HotkeyBox_PreviewKeyDown"/>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-        <TextBox x:Name="InputTextBox"
-                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                 materialDesign:HintAssist.Hint="입력될 텍스트"
-                 Margin="0,0,0,16"/>
+        <!-- FluentWindow(비-레이어드)라 한글 IME 조합이 정상 동작한다. -->
+        <ui:TitleBar Grid.Row="0" Title="단축키 추가" ShowMaximize="False" ShowMinimize="False" />
 
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="취소"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    Margin="0,0,8,0"
-                    IsCancel="True"/>
-            <Button Content="추가"
-                    Style="{StaticResource MaterialDesignRaisedButton}"
-                    IsDefault="True"
-                    Click="Add_Click"/>
+        <StackPanel Grid.Row="1" Margin="16,8,16,16">
+            <TextBlock Text="단축키" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="2,0,2,6" />
+
+            <Border x:Name="CaptureBox" Focusable="True" MinHeight="42" CornerRadius="8"
+                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                    BorderThickness="1" Padding="11,6" Cursor="Hand"
+                    PreviewKeyDown="CaptureBox_PreviewKeyDown"
+                    GotKeyboardFocus="CaptureBox_FocusChanged"
+                    LostKeyboardFocus="CaptureBox_FocusChanged"
+                    MouseLeftButtonDown="CaptureBox_MouseDown">
+                <Grid>
+                    <TextBlock x:Name="CapturePlaceholder" Text="여기를 클릭한 뒤 조합키를 누르세요"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               FontSize="12.5" VerticalAlignment="Center" />
+                    <StackPanel x:Name="KeyCapPanel" Orientation="Horizontal" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="입력란을 클릭한 뒤 원하는 조합키를 누르세요"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       FontSize="11.5" Margin="2,7,2,0" />
+
+            <TextBlock Text="입력될 텍스트" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="2,16,2,6" />
+            <ui:TextBox x:Name="InputTextBox" PlaceholderText="입력될 텍스트" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                <ui:Button Content="취소" Margin="0,0,8,0" IsCancel="True" />
+                <ui:Button Content="추가" Appearance="Primary" IsDefault="True"
+                           Padding="20,6" Click="Add_Click" />
+            </StackPanel>
         </StackPanel>
-    </StackPanel>
-</Window>
+    </Grid>
+</ui:FluentWindow>

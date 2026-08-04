@@ -24,45 +24,94 @@ namespace TextHotKey
         // 릴리스에 첨부하는 자체 포함 패키지 이름 규칙(build-release.ps1 / release.yml과 일치).
         private const string AssetName = "TextHotKey-win-x64.zip";
 
-        // 현재 버전과 GitHub 최신 릴리스를 비교한다.
-        public async Task<UpdateInfo> CheckAsync()
+        // 현재 버전과 GitHub 릴리스를 비교한다.
+        // includePrerelease=true 면 사전 릴리스(베타)까지 포함해 가장 높은 버전을 고른다.
+        public async Task<UpdateInfo> CheckAsync(bool includePrerelease = false)
         {
-            var current = GetCurrentVersion();
+            var currentVer = GetCurrentVersionObject();
+            var currentStr = FormatVersion(currentVer);
 
-            Release latest;
+            Release? chosen;
             try
             {
                 var client = new GitHubClient(new ProductHeaderValue("TextHotKey"));
-                latest = await client.Repository.Release.GetLatest(GitHubOwner, GitHubRepo);
+                if (includePrerelease)
+                {
+                    // 사전 릴리스 포함 전체에서 태그를 버전으로 파싱해 가장 높은 것을 고른다.
+                    var all = await client.Repository.Release.GetAll(GitHubOwner, GitHubRepo);
+                    chosen = all
+                        .Where(r => !r.Draft)
+                        .Select(r => new { Release = r, Ver = ParseTag(r.TagName) })
+                        .Where(x => x.Ver != null)
+                        .OrderByDescending(x => x.Ver)
+                        .Select(x => x.Release)
+                        .FirstOrDefault();
+                }
+                else
+                {
+                    // 안정판만: GetLatest는 사전 릴리스/드래프트를 자동 제외한다.
+                    chosen = await client.Repository.Release.GetLatest(GitHubOwner, GitHubRepo);
+                }
             }
             catch (NotFoundException)
             {
                 // 아직 게시된 릴리스가 없음 → 최신 상태로 간주(조회 실패 아님).
                 Logger.Info("No published release found.");
-                return new UpdateInfo(false, current, "", null, false);
+                return new UpdateInfo(false, currentStr, "", null, false);
             }
             catch (Exception ex)
             {
                 // 네트워크/인증 등 실제 조회 실패.
                 Logger.Error($"Update check failed: {ex.Message}");
-                return new UpdateInfo(false, current, "", null, true);
+                return new UpdateInfo(false, currentStr, "", null, true);
             }
 
-            var latestVersion = latest.TagName.TrimStart('v');
-            Logger.Info($"Latest version: {latestVersion}");
+            if (chosen == null)
+                return new UpdateInfo(false, currentStr, "", null, false);
 
-            bool available = Version.TryParse(latestVersion, out var lv)
-                          && Version.TryParse(current, out var cv)
-                          && lv > cv;
+            var latestVer = ParseTag(chosen.TagName);
+            var latestStr = chosen.TagName.TrimStart('v', 'V');
+            Logger.Info($"Latest version: {latestStr} (prerelease={chosen.Prerelease})");
+
+            bool available = latestVer != null && latestVer > currentVer;
 
             // 자동 설치용 zip 에셋을 찾는다. 규칙 이름 우선, 없으면 첫 zip.
-            var asset = latest.Assets.FirstOrDefault(a =>
+            var asset = chosen.Assets.FirstOrDefault(a =>
                             a.Name.Equals(AssetName, StringComparison.OrdinalIgnoreCase))
-                        ?? latest.Assets.FirstOrDefault(a =>
+                        ?? chosen.Assets.FirstOrDefault(a =>
                             a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
 
-            return new UpdateInfo(available, current, latestVersion, asset?.BrowserDownloadUrl, false);
+            return new UpdateInfo(available, currentStr, latestStr, asset?.BrowserDownloadUrl, false);
         }
+
+        // 태그(vX.Y.Z 또는 vX.Y.Z-beta.N)를 4-part Version으로 변환한다.
+        //  vX.Y.Z        -> X.Y.Z.0
+        //  vX.Y.Z-beta.N -> X.Y.Z.N  (같은 X.Y.Z 안정판(.0)보다 높게 정렬됨)
+        private static Version? ParseTag(string tag)
+        {
+            var s = tag.TrimStart('v', 'V');
+            var m = System.Text.RegularExpressions.Regex.Match(
+                s, @"^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$");
+            if (!m.Success) return null;
+            int beta = m.Groups[4].Success ? int.Parse(m.Groups[4].Value) : 0;
+            return new Version(
+                int.Parse(m.Groups[1].Value),
+                int.Parse(m.Groups[2].Value),
+                int.Parse(m.Groups[3].Value),
+                beta);
+        }
+
+        // 어셈블리 버전을 항상 4-part로 정규화(3-part 안정판은 Revision=0으로).
+        private static Version GetCurrentVersionObject()
+        {
+            var v = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
+            return new Version(v.Major, v.Minor, Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
+        }
+
+        private static string FormatVersion(Version v)
+            => v.Revision > 0
+                ? $"{v.Major}.{v.Minor}.{v.Build}-beta.{v.Revision}"
+                : $"{v.Major}.{v.Minor}.{v.Build}";
 
         // 최신 릴리스 페이지를 기본 브라우저로 연다.
         public void OpenReleasesPage()
@@ -71,12 +120,11 @@ namespace TextHotKey
             Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
         }
 
+        // 레지스트리 기록 등에 쓰는 현재 버전 문자열.
         public string GetCurrentVersion()
         {
-            var version = Assembly.GetExecutingAssembly().GetName().Version;
-            var versionStr = version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "";
+            var versionStr = FormatVersion(GetCurrentVersionObject());
             Logger.Info($"Current version: {versionStr}");
-
             return versionStr;
         }
 

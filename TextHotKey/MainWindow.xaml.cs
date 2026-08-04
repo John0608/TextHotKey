@@ -1,44 +1,223 @@
-﻿using MaterialDesignThemes.Wpf;
 using Microsoft.Win32;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using Wpf.Ui.Appearance;
+using Wpf.Ui.Controls;
 
 namespace TextHotKey
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow : FluentWindow
     {
         private bool _isActive = false;
         private readonly HotkeyManager _hotkeyManager = new HotkeyManager();
         private readonly SettingManager settingManager = new SettingManager();
         private readonly UpdateManager updateManager = new UpdateManager();
+        private readonly BetaManager betaManager;
+        private bool _betaApproved;
+
+        // 시스템 트레이(알림 영역) 아이콘. 닫기·최소화 시 여기로 숨는다.
+        private System.Windows.Forms.NotifyIcon? _trayIcon;
+        private bool _exitRequested;
+
+        // 목업과 맞춘 강조색(파랑). 시스템 강조색 대신 이 색을 테마별로 적용한다.
+        private static readonly System.Windows.Media.Color AccentSeed =
+            System.Windows.Media.Color.FromRgb(0x0F, 0x6C, 0xBD);
+
+        // 코드에서 테마 리소스로 칠하는 요소들의 현재 상태(테마 전환 시 다시 칠하기 위함).
+        private bool _hotkeysViewActive = true;
+        private string _betaStatusTextValue = "확인 전";
+        private bool? _betaStatusApprovedValue;
 
         public MainWindow()
         {
             InitializeComponent();
-            HotkeyListView.ItemsSource = _hotkeyManager.HotkeyList;
-            AutoStartCheckBox.IsChecked = IsAutoStartEnabled();
-            ThemeToggle.IsChecked = settingManager.GetTheme();
-            AutoUpdateCheckBox.IsChecked = settingManager.GetAutoUpdate();
+            betaManager = new BetaManager(settingManager);
 
-            // "프로그램 시작 시 자동 업데이트"가 켜져 있으면 시작 직후 조용히 확인한다.
+            // 저장된 테마 + 커스텀 강조색 적용.
+            ApplyTheme(settingManager.GetTheme());
+
+            HotkeyItems.ItemsSource = _hotkeyManager.HotkeyList;
+            UpdateHotkeyCount();
+            ShowView(hotkeys: true); // 시작 탭(단축키) 강조 초기화
+
+            AutoStartToggle.IsChecked = IsAutoStartEnabled();
+            AutoUpdateToggle.IsChecked = settingManager.GetAutoUpdate();
+            UpdateStatusText.Text = $"현재 v{updateManager.GetCurrentVersion()}";
+
+            // 테스트(베타) 프로그램 UI 초기화.
+            BetaCodeText.Text = betaManager.GetDeviceCode();
+            BetaEmailBox.Text = betaManager.GetEmail();
+            BetaUpdateToggle.IsChecked = settingManager.GetBetaOptIn();
+
+            SetupTrayIcon();
+            Closing += Window_Closing;
+            StateChanged += Window_StateChanged;
+
             Loaded += MainWindow_Loaded;
         }
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            // 베타 승인 상태를 조용히 갱신(백그라운드).
+            _ = RefreshBetaStatusAsync();
+
             if (!settingManager.GetAutoUpdate()) return;
 
-            var info = await updateManager.CheckAsync();
+            var info = await updateManager.CheckAsync(await ShouldUseBetaChannelAsync());
             Logger.Info($"Startup update check - current:{info.Current}, latest:{info.Latest}, available:{info.UpdateAvailable}, failed:{info.Failed}");
+            UpdateSettingsUpdateStatus(info);
 
             // 시작 시엔 실패/최신이면 조용히 넘어가고, 새 버전이 있을 때만 안내한다.
             if (info.Failed || !info.UpdateAvailable) return;
 
             await PromptAndInstallAsync(info);
+        }
+
+        // ==================== 시스템 트레이 ====================
+
+        private void SetupTrayIcon()
+        {
+            _trayIcon = new System.Windows.Forms.NotifyIcon
+            {
+                Text = "TextHotKey",
+                Visible = true,
+                Icon = LoadTrayIcon(),
+            };
+
+            var menu = new System.Windows.Forms.ContextMenuStrip();
+            menu.Items.Add("열기", null, (_, _) => RestoreFromTray());
+            menu.Items.Add("종료", null, (_, _) => ExitApp());
+            _trayIcon.ContextMenuStrip = menu;
+
+            _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
+        }
+
+        private static System.Drawing.Icon LoadTrayIcon()
+        {
+            try
+            {
+                var stream = System.Windows.Application
+                    .GetResourceStream(new Uri("pack://application:,,,/favicon.ico"))?.Stream;
+                if (stream != null) return new System.Drawing.Icon(stream);
+            }
+            catch { /* 아래 폴백 */ }
+
+            try
+            {
+                if (Environment.ProcessPath != null)
+                    return System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath)!;
+            }
+            catch { /* 아래 폴백 */ }
+
+            return System.Drawing.SystemIcons.Application;
+        }
+
+        // 트레이에서 창 복원.
+        private void RestoreFromTray()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+        }
+
+        // 실제 종료(트레이 메뉴 '종료' 또는 업데이트 재실행 시).
+        private void ExitApp()
+        {
+            _exitRequested = true;
+            _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            System.Windows.Application.Current.Shutdown();
+        }
+
+        // 타이틀바 최소화 버튼 → 최소화(= StateChanged에서 트레이로 숨김).
+        private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        // 타이틀바 닫기 버튼 → Close(= Window_Closing에서 취소하고 트레이로 숨김).
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        // 닫기 → 종료하지 않고 트레이로 숨긴다.
+        private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            if (_exitRequested) return;
+            e.Cancel = true;
+            Hide();
+        }
+
+        // 최소화 → 작업표시줄 대신 트레이로 숨긴다.
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized)
+                Hide();
+        }
+
+        // ==================== 테스트(베타) 프로그램 ====================
+
+        // 베타 채널을 쓸지: 옵트인 켜짐 + 승인됨 둘 다여야 한다.
+        private async Task<bool> ShouldUseBetaChannelAsync()
+        {
+            if (!settingManager.GetBetaOptIn()) return false;
+            return await betaManager.IsApprovedAsync();
+        }
+
+        // 허용목록을 조회해 승인 상태 표시/토글 활성화를 갱신한다.
+        private async Task RefreshBetaStatusAsync()
+        {
+            SetBetaStatus("확인 중…", approved: null);
+            bool approved = await betaManager.IsApprovedAsync();
+            _betaApproved = approved;
+
+            SetBetaStatus(approved ? "승인됨 ✓" : "미승인", approved);
+            BetaUpdateToggle.IsEnabled = approved;
+        }
+
+        // 베타 상태 pill 텍스트/색을 갱신한다. approved=null 이면 확인 중(중립).
+        private void SetBetaStatus(string text, bool? approved)
+        {
+            _betaStatusTextValue = text;
+            _betaStatusApprovedValue = approved;
+            BetaStatusText.Text = text;
+            string bg = approved == true ? "SystemFillColorSuccessBackgroundBrush" : "SubtleFillColorSecondaryBrush";
+            string fg = approved == true ? "SystemFillColorSuccessBrush" : "TextFillColorSecondaryBrush";
+            BetaStatusPill.Background = (System.Windows.Media.Brush)FindResource(bg);
+            BetaStatusText.Foreground = (System.Windows.Media.Brush)FindResource(fg);
+        }
+
+        // 테스트 신청: 이메일 저장 후 코드·이메일이 담긴 GitHub 이슈를 연다.
+        private void BetaRequestButton_Click(object sender, RoutedEventArgs e)
+        {
+            var email = BetaEmailBox.Text.Trim();
+            betaManager.SetEmail(email);
+            var url = betaManager.BuildRequestIssueUrl(email);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+        }
+
+        private async void BetaRefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshBetaStatusAsync();
+        }
+
+        private void BetaUpdateToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            settingManager.SetBetaOptIn(true);
+        }
+
+        private void BetaUpdateToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            settingManager.SetBetaOptIn(false);
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -276,84 +455,106 @@ namespace TextHotKey
             public ushort wParamH;
         }
 
-        // 타이틀바 드래그
-        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        // ==================== 테마 ====================
+
+        private void ThemeToggleButton_Click(object sender, RoutedEventArgs e)
         {
-            DragMove();
+            bool goDark = ApplicationThemeManager.GetAppTheme() != ApplicationTheme.Dark;
+            ApplyTheme(goDark);
+            settingManager.SetTheme(goDark ? "Dark" : "Light");
         }
 
-        // 최소화
-        private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+        // 테마 + 강조색을 함께 적용한다. 시스템 강조색(updateAccent) 대신 목업 파랑을 쓴다.
+        private void ApplyTheme(bool dark)
         {
-            WindowState = WindowState.Minimized;
+            var theme = dark ? ApplicationTheme.Dark : ApplicationTheme.Light;
+            ApplicationThemeManager.Apply(theme, WindowBackdropType.Mica, updateAccent: false);
+            ApplicationAccentColorManager.Apply(AccentSeed, theme, systemGlassColor: false, systemAccentColor: false);
+            ThemeIcon.Symbol = dark ? SymbolRegular.WeatherSunny24 : SymbolRegular.WeatherMoon24;
+            ApplyAddButtonColors(dark);
+            RefreshThemedBrushes();
         }
 
-        // 닫기
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        // 코드에서 테마 리소스로 칠하는 요소(탭 색/활성 뱃지/베타 뱃지)를 현재 테마로 다시 칠한다.
+        // (FindResource로 한 번 계산해 넣은 브러시는 DynamicResource와 달리 테마 전환 시 자동 갱신되지 않는다.)
+        private void RefreshThemedBrushes()
         {
-            _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
-            Close();
+            ApplyTabBrushes();
+            UpdateActivateStatus();
+            SetBetaStatus(_betaStatusTextValue, _betaStatusApprovedValue);
         }
 
-        // 다크/라이트 모드
-        private void ThemeToggle_Checked(object sender, RoutedEventArgs e)
+        // WPF-UI가 강조색에서 파생하는 Primary 색이 특히 라이트에서 탁해 보여서,
+        // "새 단축키" 버튼 배경/hover/press를 또렷한 파랑으로 직접 지정한다.
+        private void ApplyAddButtonColors(bool dark)
         {
-            var paletteHelper = new PaletteHelper();
-            var theme = paletteHelper.GetTheme();
-            theme.SetBaseTheme(BaseTheme.Dark);
-            paletteHelper.SetTheme(theme);
-            
-            settingManager.SetTheme("Dark");
+            (string bg, string over, string press) = dark
+                ? ("#2B88D8", "#3C97E4", "#2478C4")
+                : ("#0F6CBD", "#1E7AC8", "#0C5C9E");
+            AddButton.Background = HexBrush(bg);
+            AddButton.MouseOverBackground = HexBrush(over);
+            AddButton.PressedBackground = HexBrush(press);
+            AddButton.Foreground = HexBrush("#FFFFFF");
         }
 
-        private void ThemeToggle_Unchecked(object sender, RoutedEventArgs e)
-        {
-            var paletteHelper = new PaletteHelper();
-            var theme = paletteHelper.GetTheme();
-            theme.SetBaseTheme(BaseTheme.Light);
-            paletteHelper.SetTheme(theme);
+        private static System.Windows.Media.Brush HexBrush(string hex)
+            => new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex));
 
-            settingManager.SetTheme("Light");
-        }
+        // ==================== 활성화 ====================
 
-        // 활성화 토글
         private void ActivateToggle_Checked(object sender, RoutedEventArgs e)
         {
             _isActive = true;
             _hotkeyManager.RegisterAll(new WindowInteropHelper(this).Handle);
+            UpdateActivateStatus();
         }
 
         private void ActivateToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             _isActive = false;
             _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
+            UpdateActivateStatus();
         }
 
-        // 자동 시작
-        private void AutoStartCheckBox_Checked(object sender, RoutedEventArgs e)
+        private void UpdateActivateStatus()
+        {
+            ActivateStatusText.Text = _isActive ? "실행 중" : "중지됨";
+            StatusPill.Background = (System.Windows.Media.Brush)FindResource(
+                _isActive ? "SystemFillColorSuccessBackgroundBrush" : "SubtleFillColorSecondaryBrush");
+            StatusDot.Fill = (System.Windows.Media.Brush)FindResource(
+                _isActive ? "SystemFillColorSuccessBrush" : "TextFillColorTertiaryBrush");
+        }
+
+        // ==================== 자동 시작 / 자동 업데이트 ====================
+
+        private void AutoStartToggle_Checked(object sender, RoutedEventArgs e)
         {
             SetAutoStart(true);
         }
 
-        private void AutoStartCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        private void AutoStartToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             SetAutoStart(false);
         }
 
-        private void AutoUpdateCheckBox_Checked(object sender, RoutedEventArgs e)
+        private void AutoUpdateToggle_Checked(object sender, RoutedEventArgs e)
         {
             settingManager.SetAutoUpdate(true);
         }
 
-        private void AutoUpdateCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        private void AutoUpdateToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             settingManager.SetAutoUpdate(false);
         }
 
+        // ==================== 업데이트 ====================
+
         private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e)
         {
-            var info = await updateManager.CheckAsync();
+            var info = await updateManager.CheckAsync(await ShouldUseBetaChannelAsync());
             Logger.Info($"Update check - current:{info.Current}, latest:{info.Latest}, available:{info.UpdateAvailable}, failed:{info.Failed}");
+            UpdateSettingsUpdateStatus(info);
 
             if (info.Failed)
             {
@@ -368,6 +569,17 @@ namespace TextHotKey
             }
 
             await PromptAndInstallAsync(info);
+        }
+
+        // 설정 화면의 업데이트 상태 줄을 갱신한다.
+        private void UpdateSettingsUpdateStatus(UpdateInfo info)
+        {
+            if (info.Failed)
+                UpdateStatusText.Text = $"현재 v{info.Current} · 확인 실패";
+            else if (info.UpdateAvailable)
+                UpdateStatusText.Text = $"현재 v{info.Current} · 새 버전 v{info.Latest}";
+            else
+                UpdateStatusText.Text = $"현재 v{info.Current} · 최신 버전입니다";
         }
 
         // 새 버전 안내 → 동의 시 다운로드 → 앱 종료 → 업데이터가 교체·재실행.
@@ -401,6 +613,9 @@ namespace TextHotKey
                 }
 
                 // 업데이터가 앱 종료를 기다렸다가 파일을 교체하고 다시 실행한다.
+                _exitRequested = true;
+                _trayIcon?.Dispose();
+                _trayIcon = null;
                 System.Windows.Application.Current.Shutdown();
             }
             catch (Exception ex)
@@ -413,41 +628,36 @@ namespace TextHotKey
         // 다운로드 진행률 다이얼로그. 완료 시 true, 취소 시 false. 오류는 예외로 전달.
         private async Task<bool> ShowDownloadDialogAsync(string url, string zipPath)
         {
-            var view = new StackPanel { Margin = new Thickness(16), Width = 300 };
+            var panel = new System.Windows.Controls.StackPanel { MinWidth = 280 };
 
-            view.Children.Add(new TextBlock
-            {
-                Text = "업데이트 다운로드 중...",
-                Style = (Style)FindResource("MaterialDesignHeadline6TextBlock"),
-                Margin = new Thickness(0, 0, 0, 16)
-            });
+            var bar = new System.Windows.Controls.ProgressBar { Minimum = 0, Maximum = 100, Value = 0, Height = 6 };
+            panel.Children.Add(bar);
 
-            var bar = new System.Windows.Controls.ProgressBar { Minimum = 0, Maximum = 100, Value = 0, Height = 8 };
-            view.Children.Add(bar);
-
-            var pct = new TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 16) };
-            view.Children.Add(pct);
+            var pct = new System.Windows.Controls.TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 0) };
+            panel.Children.Add(pct);
 
             var cts = new CancellationTokenSource();
-            var cancelBtn = new System.Windows.Controls.Button
-            {
-                Content = "취소",
-                Style = (Style)FindResource("MaterialDesignFlatButton"),
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
-            };
-            cancelBtn.Click += (s, e) => cts.Cancel();
-            view.Children.Add(cancelBtn);
-
             var progress = new Progress<double>(p =>
             {
                 bar.Value = p * 100;
                 pct.Text = $"{p * 100:0}%";
             });
 
+            var box = new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "업데이트 다운로드 중…",
+                Content = panel,
+                CloseButtonText = "취소",
+                IsPrimaryButtonEnabled = false,
+                IsSecondaryButtonEnabled = false,
+                Owner = this,
+            };
+
             bool success = false;
+            bool done = false;
             Exception? error = null;
 
-            await DialogHost.Show(view, "RootDialog", async (object s, DialogOpenedEventArgs args) =>
+            _ = Task.Run(async () =>
             {
                 try
                 {
@@ -456,7 +666,6 @@ namespace TextHotKey
                 }
                 catch (OperationCanceledException)
                 {
-                    // 사용자 취소 → 부분 파일 정리.
                     try { File.Delete(zipPath); } catch { /* 무시 */ }
                 }
                 catch (Exception ex)
@@ -465,15 +674,25 @@ namespace TextHotKey
                 }
                 finally
                 {
-                    args.Session.Close(false);
+                    done = true;
+                    // MessageBox.Close()는 Obsolete로 표시돼 있으나 공개 대체 오버로드가 없어 그대로 사용한다.
+#pragma warning disable CS0618
+                    Dispatcher.Invoke(() => box.Close());
+#pragma warning restore CS0618
                 }
             });
+
+            await box.ShowDialogAsync();
+
+            // 다운로드가 끝나기 전에 닫혔다면(취소 버튼) 다운로드를 취소한다.
+            if (!done) cts.Cancel();
 
             if (error != null) throw error;
             return success;
         }
 
-        // 추가 팝업
+        // ==================== 단축키 목록 ====================
+
         private void AddButton_Click(object sender, RoutedEventArgs e)
         {
             // DialogHost(Popup)는 한글 IME 조합이 깨지므로 실제 모달 Window로 입력받는다.
@@ -483,34 +702,62 @@ namespace TextHotKey
                 _hotkeyManager.Add(
                     new WindowInteropHelper(this).Handle,
                     new HotkeyItem { Hotkey = dialog.HotkeyText, Text = dialog.InputText });
-                HotkeyListView.Items.Refresh();
+                HotkeyItems.Items.Refresh();
+                UpdateHotkeyCount();
             }
         }
 
-        // 삭제
         private void DeleteButton_Click(object sender, RoutedEventArgs e)
         {
             if (sender is System.Windows.Controls.Button btn && btn.Tag is HotkeyItem item)
             {
                 _hotkeyManager.Remove(new WindowInteropHelper(this).Handle, item);
-                HotkeyListView.Items.Refresh();
+                HotkeyItems.Items.Refresh();
+                UpdateHotkeyCount();
             }
         }
 
-        // 탭 전환
-        private void HomeTab_Click(object sender, RoutedEventArgs e)
+        private void UpdateHotkeyCount()
         {
-            HomePage.Visibility = Visibility.Visible;
-            SettingsPage.Visibility = Visibility.Collapsed;
+            int n = _hotkeyManager.HotkeyList.Count;
+            CountText.Text = $"{n}개";
+            EmptyHint.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ==================== 탭 전환 ====================
+
+        private void HotkeysTab_Click(object sender, RoutedEventArgs e)
+        {
+            ShowView(hotkeys: true);
         }
 
         private void SettingsTab_Click(object sender, RoutedEventArgs e)
         {
-            HomePage.Visibility = Visibility.Collapsed;
-            SettingsPage.Visibility = Visibility.Visible;
+            ShowView(hotkeys: false);
         }
 
-        // 자동 시작 레지스트리
+        private void ShowView(bool hotkeys)
+        {
+            _hotkeysViewActive = hotkeys;
+            HotkeysView.Visibility = hotkeys ? Visibility.Visible : Visibility.Collapsed;
+            SettingsView.Visibility = hotkeys ? Visibility.Collapsed : Visibility.Visible;
+            ApplyTabBrushes();
+        }
+
+        // 활성/비활성 탭의 글자·아이콘 색과 강조 바를 현재 테마·현재 뷰 기준으로 칠한다.
+        private void ApplyTabBrushes()
+        {
+            bool hotkeys = _hotkeysViewActive;
+            var active = (System.Windows.Media.Brush)FindResource("AccentTextFillColorPrimaryBrush");
+            var inactive = (System.Windows.Media.Brush)FindResource("TextFillColorSecondaryBrush");
+            HotkeysTabButton.Foreground = hotkeys ? active : inactive;
+            SettingsTabButton.Foreground = hotkeys ? inactive : active;
+            HotkeysTabBar.Visibility = hotkeys ? Visibility.Visible : Visibility.Collapsed;
+            SettingsTabBar.Visibility = hotkeys ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        // ==================== 자동 시작 레지스트리 ====================
+
         private bool IsAutoStartEnabled()
         {
             using var key = Registry.CurrentUser.OpenSubKey(
@@ -529,66 +776,34 @@ namespace TextHotKey
                 key?.DeleteValue("TextHotKey", false);
         }
 
+        // ==================== 알림 다이얼로그 ====================
+
         // confirm=true  : 네/아니요 두 버튼(예: "지금 업데이트할까요?"). 반환값 = 네 선택 여부.
         // confirm=false : 확인 한 버튼짜리 단순 알림(예: "현재 최신 버전입니다").
         private async Task<bool> ShowAlert(string message, string title = "알림", bool confirm = true)
         {
-            var view = new StackPanel { Margin = new Thickness(16), Width = 250 };
-
-            view.Children.Add(new TextBlock
+            var box = new Wpf.Ui.Controls.MessageBox
             {
-                Text = title,
-                Style = (Style)FindResource("MaterialDesignHeadline6TextBlock"),
-                Margin = new Thickness(0, 0, 0, 8)
-            });
-
-            view.Children.Add(new TextBlock
-            {
-                Text = message,
-                Margin = new Thickness(0, 0, 0, 16)
-            });
-
-            var buttons = new StackPanel
-            {
-                Orientation = System.Windows.Controls.Orientation.Horizontal,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+                Title = title,
+                Content = message,
+                Owner = this,
             };
 
             if (confirm)
             {
-                var cancelBtn = new System.Windows.Controls.Button
-                {
-                    Content = "아니요",
-                    Style = (Style)FindResource("MaterialDesignFlatButton"),
-                    Margin = new Thickness(0, 0, 8, 0)
-                };
-                cancelBtn.Click += (s, e) => DialogHost.Close("RootDialog", false);
-
-                var okBtn = new System.Windows.Controls.Button
-                {
-                    Content = "네",
-                    Style = (Style)FindResource("MaterialDesignRaisedButton"),
-                };
-                okBtn.Click += (s, e) => DialogHost.Close("RootDialog", true);
-
-                buttons.Children.Add(okBtn);
-                buttons.Children.Add(cancelBtn);
+                box.PrimaryButtonText = "네";
+                box.PrimaryButtonAppearance = ControlAppearance.Primary;
+                box.CloseButtonText = "아니요";
             }
             else
             {
-                var okBtn = new System.Windows.Controls.Button
-                {
-                    Content = "확인",
-                    Style = (Style)FindResource("MaterialDesignRaisedButton"),
-                };
-                okBtn.Click += (s, e) => DialogHost.Close("RootDialog", true);
-
-                buttons.Children.Add(okBtn);
+                box.CloseButtonText = "확인";
+                box.IsPrimaryButtonEnabled = false;
+                box.IsSecondaryButtonEnabled = false;
             }
-            view.Children.Add(buttons);
 
-            var result = await DialogHost.Show(view, "RootDialog");
-            return result is true;
+            var result = await box.ShowDialogAsync();
+            return result == Wpf.Ui.Controls.MessageBoxResult.Primary;
         }
     }
 }

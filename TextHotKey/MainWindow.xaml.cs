@@ -192,17 +192,20 @@ namespace TextHotKey
             BetaStatusText.Foreground = (System.Windows.Media.Brush)FindResource(fg);
         }
 
-        // 테스트 신청: 이메일 저장 후 코드·이메일이 담긴 GitHub 이슈를 연다.
-        private void BetaRequestButton_Click(object sender, RoutedEventArgs e)
+        // 테스트 신청: 코드·이메일을 Supabase에 바로 제출한다(브라우저·계정 불필요).
+        private async void BetaRequestButton_Click(object sender, RoutedEventArgs e)
         {
             var email = BetaEmailBox.Text.Trim();
-            betaManager.SetEmail(email);
-            var url = betaManager.BuildRequestIssueUrl(email);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            });
+            var ok = await betaManager.SubmitRequestAsync(email);
+
+            if (ok)
+                await ShowAlert("테스트 신청이 접수되었습니다.\n오너 승인 후 '승인 상태 새로고침'을 눌러주세요.",
+                    "테스트 신청", confirm: false);
+            else
+                await ShowAlert("신청 전송에 실패했습니다.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.",
+                    "테스트 신청", confirm: false);
+
+            await RefreshBetaStatusAsync();
         }
 
         private async void BetaRefreshButton_Click(object sender, RoutedEventArgs e)

@@ -718,66 +718,94 @@ namespace TextHotKey
         }
 
         // 다운로드 진행률 다이얼로그. 완료 시 true, 취소 시 false. 오류는 예외로 전달.
+        //
+        // WPF-UI MessageBox는 프로그램적으로 닫는 방법(Close()/CancellationToken)이 모두
+        // 내부 TaskCompletionSource를 완료시키지 못해 100% 후에도 다이얼로그가 안 닫히는 버그가 있었다.
+        // 그래서 표준 Window + Window.Close()(=ShowDialog 확실히 반환)로 직접 구현한다.
         private async Task<bool> ShowDownloadDialogAsync(string url, string zipPath)
         {
-            var panel = new System.Windows.Controls.StackPanel { MinWidth = 280 };
-
+            var title = new System.Windows.Controls.TextBlock
+            {
+                Text = "업데이트 다운로드 중…",
+                FontSize = 14,
+                FontWeight = System.Windows.FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
             var bar = new System.Windows.Controls.ProgressBar { Minimum = 0, Maximum = 100, Value = 0, Height = 6 };
+            var pct = new System.Windows.Controls.TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 12) };
+            var cancelBtn = new Wpf.Ui.Controls.Button
+            {
+                Content = "취소",
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                Padding = new Thickness(16, 4, 16, 4)
+            };
+
+            var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(20) };
+            panel.Children.Add(title);
             panel.Children.Add(bar);
-
-            var pct = new System.Windows.Controls.TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 0) };
             panel.Children.Add(pct);
+            panel.Children.Add(cancelBtn);
 
-            var cts = new CancellationTokenSource();
+            var win = new Wpf.Ui.Controls.FluentWindow
+            {
+                Title = "업데이트",
+                Owner = this,
+                Width = 340,
+                SizeToContent = System.Windows.SizeToContent.Height,
+                ResizeMode = System.Windows.ResizeMode.NoResize,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+                WindowBackdropType = Wpf.Ui.Controls.WindowBackdropType.None,
+                Content = panel,
+            };
+
+            var downloadCts = new CancellationTokenSource();
             var progress = new Progress<double>(p =>
             {
                 bar.Value = p * 100;
                 pct.Text = $"{p * 100:0}%";
             });
 
-            var box = new Wpf.Ui.Controls.MessageBox
-            {
-                Title = "업데이트 다운로드 중…",
-                Content = panel,
-                CloseButtonText = "취소",
-                IsPrimaryButtonEnabled = false,
-                IsSecondaryButtonEnabled = false,
-                Owner = this,
-            };
-
             bool success = false;
-            bool done = false;
             Exception? error = null;
 
-            _ = Task.Run(async () =>
+            cancelBtn.Click += (_, _) =>
             {
-                try
-                {
-                    await updateManager.DownloadAsync(url, zipPath, progress, cts.Token);
-                    success = true;
-                }
-                catch (OperationCanceledException)
-                {
-                    try { File.Delete(zipPath); } catch { /* 무시 */ }
-                }
-                catch (Exception ex)
-                {
-                    error = ex;
-                }
-                finally
-                {
-                    done = true;
-                    // MessageBox.Close()는 Obsolete로 표시돼 있으나 공개 대체 오버로드가 없어 그대로 사용한다.
-#pragma warning disable CS0618
-                    Dispatcher.Invoke(() => box.Close());
-#pragma warning restore CS0618
-                }
-            });
+                downloadCts.Cancel();
+                win.Close();
+            };
 
-            await box.ShowDialogAsync();
+            // 창이 실제로 뜬 뒤 다운로드를 시작해야, 빠른 다운로드에서 win.Close()가 표시 전에
+            // 호출돼 무시되는 레이스를 막는다.
+            Task? downloadTask = null;
+            win.ContentRendered += (_, _) =>
+            {
+                downloadTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await updateManager.DownloadAsync(url, zipPath, progress, downloadCts.Token);
+                        success = true;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try { File.Delete(zipPath); } catch { /* 무시 */ }
+                    }
+                    catch (Exception ex)
+                    {
+                        error = ex;
+                    }
+                    finally
+                    {
+                        // 완료·실패 시 진행 다이얼로그를 닫는다(UI 스레드에서). 이미 닫혔으면 무시.
+                        win.Dispatcher.Invoke(() => { if (win.IsLoaded) win.Close(); });
+                    }
+                });
+            };
 
-            // 다운로드가 끝나기 전에 닫혔다면(취소 버튼) 다운로드를 취소한다.
-            if (!done) cts.Cancel();
+            // 모달로 표시. 다운로드 완료(win.Close) 또는 사용자 취소 시 반환된다.
+            win.ShowDialog();
+            if (downloadTask != null) await downloadTask;
 
             if (error != null) throw error;
             return success;

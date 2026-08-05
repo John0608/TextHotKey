@@ -28,8 +28,10 @@ namespace TextHotKey
 
         // 코드에서 테마 리소스로 칠하는 요소들의 현재 상태(테마 전환 시 다시 칠하기 위함).
         private bool _hotkeysViewActive = true;
-        private string _betaStatusTextValue = "확인 전";
-        private bool? _betaStatusApprovedValue;
+
+        // 베타 신청 상태 머신.
+        private enum BetaState { None, Pending, Approved }
+        private BetaState _betaState = BetaState.None;
 
         public MainWindow()
         {
@@ -47,10 +49,11 @@ namespace TextHotKey
             AutoUpdateToggle.IsChecked = settingManager.GetAutoUpdate();
             UpdateStatusText.Text = $"현재 v{updateManager.GetCurrentVersion()}";
 
-            // 테스트(베타) 프로그램 UI 초기화.
+            // 테스트(베타) 프로그램 UI 초기화. (승인 여부는 Loaded에서 서버 확인 후 갱신)
             BetaCodeText.Text = betaManager.GetDeviceCode();
             BetaEmailBox.Text = betaManager.GetEmail();
             BetaUpdateToggle.IsChecked = settingManager.GetBetaOptIn();
+            ApplyBetaState(settingManager.GetBetaRequested() ? BetaState.Pending : BetaState.None);
 
             SetupTrayIcon();
             Closing += Window_Closing;
@@ -169,41 +172,89 @@ namespace TextHotKey
             return await betaManager.IsApprovedAsync();
         }
 
-        // 허용목록을 조회해 승인 상태 표시/토글 활성화를 갱신한다.
+        // 서버 승인 여부 + 로컬 신청 여부로 상태를 계산해 UI를 갱신한다.
+        //  승인됨   : 서버가 approved=true
+        //  승인 대기중 : 신청은 했지만 아직 미승인
+        //  미신청    : 신청 이력 없음
         private async Task RefreshBetaStatusAsync()
         {
-            SetBetaStatus("확인 중…", approved: null);
+            ShowBetaChecking();
             bool approved = await betaManager.IsApprovedAsync();
             _betaApproved = approved;
 
-            SetBetaStatus(approved ? "승인됨 ✓" : "미승인", approved);
-            BetaUpdateToggle.IsEnabled = approved;
+            var state = approved ? BetaState.Approved
+                      : settingManager.GetBetaRequested() ? BetaState.Pending
+                      : BetaState.None;
+            ApplyBetaState(state);
         }
 
-        // 베타 상태 pill 텍스트/색을 갱신한다. approved=null 이면 확인 중(중립).
-        private void SetBetaStatus(string text, bool? approved)
+        // 상태별 뱃지 색/문구 + 이메일 잠금 + 신청 버튼/베타 토글 활성화를 일괄 적용한다.
+        private void ApplyBetaState(BetaState state)
         {
-            _betaStatusTextValue = text;
-            _betaStatusApprovedValue = approved;
+            _betaState = state;
+
+            string text, bgKey, fgKey;
+            bool emailLocked, canRequest, toggleEnabled;
+
+            switch (state)
+            {
+                case BetaState.Approved:
+                    text = "승인됨 ✓";
+                    bgKey = "SystemFillColorSuccessBackgroundBrush"; fgKey = "SystemFillColorSuccessBrush";
+                    emailLocked = true; canRequest = false; toggleEnabled = true;
+                    break;
+                case BetaState.Pending:
+                    text = "승인 대기중";
+                    bgKey = "SystemFillColorCautionBackgroundBrush"; fgKey = "SystemFillColorCautionBrush";
+                    emailLocked = true; canRequest = false; toggleEnabled = false;
+                    break;
+                default: // None
+                    text = "미신청";
+                    bgKey = "SubtleFillColorSecondaryBrush"; fgKey = "TextFillColorSecondaryBrush";
+                    emailLocked = false; canRequest = true; toggleEnabled = false;
+                    break;
+            }
+
             BetaStatusText.Text = text;
-            string bg = approved == true ? "SystemFillColorSuccessBackgroundBrush" : "SubtleFillColorSecondaryBrush";
-            string fg = approved == true ? "SystemFillColorSuccessBrush" : "TextFillColorSecondaryBrush";
-            BetaStatusPill.Background = (System.Windows.Media.Brush)FindResource(bg);
-            BetaStatusText.Foreground = (System.Windows.Media.Brush)FindResource(fg);
+            BetaStatusPill.Background = ThemeBrush(bgKey, "SubtleFillColorSecondaryBrush");
+            BetaStatusText.Foreground = ThemeBrush(fgKey, "TextFillColorSecondaryBrush");
+            BetaEmailBox.IsReadOnly = emailLocked;
+            BetaRequestButton.IsEnabled = canRequest;
+            BetaUpdateToggle.IsEnabled = toggleEnabled;
+            // "참가 그만두기"는 참가 중(대기중/승인됨)일 때만 노출.
+            BetaLeaveButton.Visibility = state == BetaState.None ? Visibility.Collapsed : Visibility.Visible;
         }
+
+        // 서버 확인 중 임시 표시(중립).
+        private void ShowBetaChecking()
+        {
+            BetaStatusText.Text = "확인 중…";
+            BetaStatusPill.Background = ThemeBrush("SubtleFillColorSecondaryBrush", "SubtleFillColorSecondaryBrush");
+            BetaStatusText.Foreground = ThemeBrush("TextFillColorSecondaryBrush", "TextFillColorSecondaryBrush");
+        }
+
+        // 리소스 키가 없으면 폴백으로 안전하게 브러시를 얻는다(테마별 키 차이 방지).
+        private System.Windows.Media.Brush ThemeBrush(string key, string fallback)
+            => (System.Windows.Media.Brush)(TryFindResource(key) ?? FindResource(fallback));
 
         // 테스트 신청: 코드·이메일을 Supabase에 바로 제출한다(브라우저·계정 불필요).
         private async void BetaRequestButton_Click(object sender, RoutedEventArgs e)
         {
+            BetaRequestButton.IsEnabled = false; // 중복 클릭 방지
             var email = BetaEmailBox.Text.Trim();
             var ok = await betaManager.SubmitRequestAsync(email);
 
             if (ok)
-                await ShowAlert("테스트 신청이 접수되었습니다.\n오너 승인 후 '승인 상태 새로고침'을 눌러주세요.",
+            {
+                settingManager.SetBetaRequested(true);
+                await ShowAlert("테스트 신청이 접수되었습니다.\n오너 승인 후 자동으로 반영됩니다.",
                     "테스트 신청", confirm: false);
+            }
             else
+            {
                 await ShowAlert("신청 전송에 실패했습니다.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.",
                     "테스트 신청", confirm: false);
+            }
 
             await RefreshBetaStatusAsync();
         }
@@ -213,14 +264,44 @@ namespace TextHotKey
             await RefreshBetaStatusAsync();
         }
 
-        private void BetaUpdateToggle_Checked(object sender, RoutedEventArgs e)
+        // 참가 완전 탈퇴: 확인 후 서버에서 신청/승인 삭제 + 로컬 리셋 → 미신청으로.
+        private async void BetaLeaveButton_Click(object sender, RoutedEventArgs e)
         {
-            settingManager.SetBetaOptIn(true);
+            var ok = await ShowAlert(
+                "테스트(베타) 참가를 그만둘까요?\n승인이 해제되고 미신청 상태로 돌아갑니다. (다시 하려면 재신청)",
+                "참가 그만두기");
+            if (!ok) return;
+
+            var left = await betaManager.LeaveAsync();
+            if (left)
+            {
+                settingManager.SetBetaRequested(false);
+                settingManager.SetBetaOptIn(false);
+                BetaUpdateToggle.IsChecked = false;
+                // 완전 탈퇴: 참가코드도 새로 발급 → 재신청 시 새 신원으로 시작.
+                betaManager.ResetDeviceCode();
+                BetaCodeText.Text = betaManager.GetDeviceCode();
+                await ShowAlert("테스트 참가를 종료했습니다.\n참가코드가 새로 발급되었습니다.", "참가 그만두기", confirm: false);
+            }
+            else
+            {
+                await ShowAlert("처리에 실패했습니다.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.",
+                    "참가 그만두기", confirm: false);
+            }
+
+            await RefreshBetaStatusAsync();
         }
 
-        private void BetaUpdateToggle_Unchecked(object sender, RoutedEventArgs e)
+        private async void BetaUpdateToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            settingManager.SetBetaOptIn(true);
+            await RefreshUpdateStatusAsync(); // 베타 채널로 바뀌었으니 업데이트 상태 재조회
+        }
+
+        private async void BetaUpdateToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             settingManager.SetBetaOptIn(false);
+            await RefreshUpdateStatusAsync(); // 안정판 채널로 되돌았으니 사전릴리스 문구 제거
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -484,7 +565,7 @@ namespace TextHotKey
         {
             ApplyTabBrushes();
             UpdateActivateStatus();
-            SetBetaStatus(_betaStatusTextValue, _betaStatusApprovedValue);
+            ApplyBetaState(_betaState);
         }
 
         // WPF-UI가 강조색에서 파생하는 Primary 색이 특히 라이트에서 탁해 보여서,
@@ -583,6 +664,14 @@ namespace TextHotKey
                 UpdateStatusText.Text = $"현재 v{info.Current} · 새 버전 v{info.Latest}";
             else
                 UpdateStatusText.Text = $"현재 v{info.Current} · 최신 버전입니다";
+        }
+
+        // 현재 채널(안정판/베타) 기준으로 업데이트 상태 텍스트만 다시 조회한다(설치 안내 없이).
+        // 베타 참가/탈퇴·토글로 채널이 바뀔 때 사전릴리스 문구를 즉시 반영/제거하기 위함.
+        private async Task RefreshUpdateStatusAsync()
+        {
+            var info = await updateManager.CheckAsync(await ShouldUseBetaChannelAsync());
+            UpdateSettingsUpdateStatus(info);
         }
 
         // 새 버전 안내 → 동의 시 다운로드 → 앱 종료 → 업데이터가 교체·재실행.

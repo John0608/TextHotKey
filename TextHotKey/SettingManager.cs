@@ -40,6 +40,17 @@ namespace TextHotKey
             return Get("BetaOptIn", false);
         }
 
+        // 이 기기에서 베타 신청을 보냈는지(= 승인 대기중 판별용). 기기 코드와 같은 수명.
+        public void SetBetaRequested(bool status)
+        {
+            Set("BetaRequested", status);
+        }
+
+        public bool GetBetaRequested()
+        {
+            return Get("BetaRequested", false);
+        }
+
         public void SetTheme(string theme)
         {
             Set("Theme", theme);

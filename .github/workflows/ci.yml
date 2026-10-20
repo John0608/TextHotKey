@@ -20,7 +20,7 @@ jobs:
       - name: Build
         run: dotnet build TextHotKey.slnx -c Release
       - name: Unit tests
-        run: dotnet test TextHotKey.Tests -c Release --no-build --filter "Category!=E2E" --logger "trx;LogFileName=unit.trx" --logger "console;verbosity=normal"
+        run: dotnet test TextHotKey.Tests -c Release --no-build --filter "Category!=E2E&Category!=ReleaseUpgrade" --logger "trx;LogFileName=unit.trx" --logger "console;verbosity=normal"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7

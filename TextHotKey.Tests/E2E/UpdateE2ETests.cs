@@ -89,6 +89,42 @@ public class UpdateE2ETests(ReleaseBuildsFixture builds, ITestOutputHelper outpu
         }
     }
 
+    // 받은 패키지가 손상된 경우: Updater가 실패 → 구버전 그대로 재실행 → 앱이 실패 사유를 안내하고,
+    // 같은 실행에서 곧바로 다시 업데이트를 시도하지 않는다.
+    [Fact]
+    public void CorruptPackage_RestoresOldVersion_AndAppShowsFailure()
+    {
+        using var sandbox = new InstallSandbox();
+        var junk = new byte[2 * 1024 * 1024];
+        Random.Shared.NextBytes(junk);
+        using var server = new FakeReleaseServer { AssetBytes = junk };
+        server.Releases.Add(new("v" + ReleaseBuildsFixture.NewVersion));
+        sandbox.Install(builds.OldZip);
+        sandbox.WriteSettings("{\"AutoUpdate\":true}");
+        var before = InstallSandbox.HashTree(sandbox.InstallDir);
+
+        try
+        {
+            using var oldApp = sandbox.LaunchApp(server.BaseUrl);
+            Assert.True(ClickButton(oldApp, "네"), "업데이트 안내 다이얼로그가 뜨지 않음");
+            Assert.True(oldApp.WaitForExit(UiTimeout), "다운로드 후 앱이 종료되지 않음");
+
+            Process? relaunched = null;
+            Assert.True(InstallSandbox.WaitUntil(() => (relaunched = sandbox.RunningApps().FirstOrDefault()) != null, UiTimeout),
+                "실패 후 구버전 앱이 재실행되지 않음");
+            Assert.True(WaitForText(relaunched!, "업데이트에 실패해 이전 버전을 계속 사용합니다"), "업데이트 실패 안내가 표시되지 않음");
+            Assert.True(WaitForText(relaunched!, "업데이트 파일이 손상되었습니다"), "실패 사유가 표시되지 않음");
+
+            Assert.Equal(before, InstallSandbox.HashTree(sandbox.InstallDir));
+            Assert.Equal(1, server.CountRequests("/download/")); // 재실행 직후 다시 받지 않음
+            Assert.False(File.Exists(Path.Combine(sandbox.UpdateTempDir, "update-result.txt")), "결과 파일이 소비되지 않음");
+        }
+        finally
+        {
+            Dump(sandbox);
+        }
+    }
+
     // 프로세스의 창들에서 이름이 name인 버튼을 찾아 누른다.
     private static bool ClickButton(Process process, string name)
     {
@@ -124,7 +160,9 @@ public class UpdateE2ETests(ReleaseBuildsFixture builds, ITestOutputHelper outpu
         var expected = InstallSandbox.HashTree(expectedDir);
         var actual = InstallSandbox.HashTree(actualDir);
         var mismatched = expected.Where(kv => !actual.TryGetValue(kv.Key, out var h) || h != kv.Value).Select(kv => kv.Key).ToList();
-        Assert.True(mismatched.Count == 0, "신버전과 다른 파일: " + string.Join(", ", mismatched));
+        var extra = actual.Keys.Where(k => !expected.ContainsKey(k)).ToList();
+        Assert.True(mismatched.Count == 0 && extra.Count == 0,
+            $"신버전과 다르거나 없는 파일: [{string.Join(", ", mismatched)}] 남은 파일: [{string.Join(", ", extra)}]");
     }
 
     private void Dump(InstallSandbox sandbox)

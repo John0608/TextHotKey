@@ -171,6 +171,30 @@ namespace TextHotKey
             }
         }
 
+        // 지난 업데이트가 실패했다면 그 사유(사용자용 메시지)를 돌려주고 결과 파일을 지운다. 없거나 성공이면 null.
+        // 결과 파일은 Updater가 로그 옆(UpdateTempDir)에 남긴다: 1행 ok|fail, 2행 메시지.
+        public string? TakeFailedUpdateMessage()
+        {
+            var path = Path.Combine(AppEnv.UpdateTempDir, "update-result.txt");
+            if (!File.Exists(path)) return null;
+            try
+            {
+                var lines = File.ReadAllLines(path);
+                File.Delete(path);
+                if (lines.Length > 0 && lines[0].Trim() == "fail")
+                {
+                    var msg = string.Join("\n", lines.Skip(1)).Trim();
+                    Logger.Warn($"Previous update failed: {msg}");
+                    return msg;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"Reading update result failed: {ex.Message}");
+            }
+            return null;
+        }
+
         // Updater.exe를 임시 폴더로 복사해 실행하고, 다운로드된 zip 경로·설치 대상·현재 PID를 넘긴다.
         // 설치 폴더의 Updater.exe까지 덮어쓸 수 있도록 반드시 임시 복사본에서 실행한다.
         public bool StartUpdater(string zipPath)

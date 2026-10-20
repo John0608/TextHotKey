@@ -1,0 +1,46 @@
+name: CI
+
+# PR과 master 푸시마다 빌드 + 테스트를 돌린다.
+#  - unit : 빠른 단위 테스트(버전 판정, 설정 저장, 가짜 서버 대상 업데이트 확인/다운로드)
+#  - e2e  : 실제 릴리스 스크립트로 구버전/신버전을 빌드해 업데이트 전 과정을 실행(UI 자동화 포함)
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build TextHotKey.slnx -c Release
+      - name: Unit tests
+        run: dotnet test TextHotKey.Tests -c Release --no-build --filter "Category!=E2E" --logger "trx;LogFileName=unit.trx" --logger "console;verbosity=normal"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-results
+          path: TextHotKey.Tests/TestResults/*.trx
+
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Update E2E tests
+        run: dotnet test TextHotKey.Tests -c Release --filter "Category=E2E" --logger "trx;LogFileName=e2e.trx" --logger "console;verbosity=detailed"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-test-results
+          path: TextHotKey.Tests/TestResults/*.trx

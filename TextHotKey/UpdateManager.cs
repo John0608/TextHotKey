@@ -34,7 +34,10 @@ namespace TextHotKey
             Release? chosen;
             try
             {
-                var client = new GitHubClient(new ProductHeaderValue("TextHotKey"));
+                var header = new ProductHeaderValue("TextHotKey");
+                var client = AppEnv.UpdateApiUrl is { } apiUrl
+                    ? new GitHubClient(header, apiUrl) // 테스트: 가짜 릴리스 서버
+                    : new GitHubClient(header);
                 if (includePrerelease)
                 {
                     // 사전 릴리스 포함 전체에서 태그를 버전으로 파싱해 가장 높은 것을 고른다.
@@ -87,7 +90,7 @@ namespace TextHotKey
         // 태그(vX.Y.Z 또는 vX.Y.Z-beta.N)를 4-part Version으로 변환한다.
         //  vX.Y.Z        -> X.Y.Z.0
         //  vX.Y.Z-beta.N -> X.Y.Z.N  (같은 X.Y.Z 안정판(.0)보다 높게 정렬됨)
-        private static Version? ParseTag(string tag)
+        internal static Version? ParseTag(string tag)
         {
             var s = tag.TrimStart('v', 'V');
             var m = System.Text.RegularExpressions.Regex.Match(
@@ -108,7 +111,7 @@ namespace TextHotKey
             return new Version(v.Major, v.Minor, Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
         }
 
-        private static string FormatVersion(Version v)
+        internal static string FormatVersion(Version v)
             => v.Revision > 0
                 ? $"{v.Major}.{v.Minor}.{v.Build}-beta.{v.Revision}"
                 : $"{v.Major}.{v.Minor}.{v.Build}";
@@ -173,7 +176,7 @@ namespace TextHotKey
                 return false;
             }
 
-            var tempDir = Path.Combine(Path.GetTempPath(), "TextHotKey_update");
+            var tempDir = AppEnv.UpdateTempDir;
             Directory.CreateDirectory(tempDir);
 
             var tempUpdater = Path.Combine(tempDir, "Updater.exe");
@@ -190,6 +193,7 @@ namespace TextHotKey
             psi.ArgumentList.Add("--dir"); psi.ArgumentList.Add(installDir);
             psi.ArgumentList.Add("--exe"); psi.ArgumentList.Add(exePath);
             psi.ArgumentList.Add("--pid"); psi.ArgumentList.Add(pid.ToString());
+            psi.ArgumentList.Add("--log"); psi.ArgumentList.Add(Path.Combine(tempDir, "updater.log"));
 
             Logger.Info($"Starting updater: dir={installDir}, zip={zipPath}, pid={pid}");
             Process.Start(psi);

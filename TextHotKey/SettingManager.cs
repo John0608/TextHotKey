@@ -8,14 +8,16 @@ namespace TextHotKey
 {
     class SettingManager
     {
-        private static readonly string SavePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TextHotKey", "settings.json");
+        private readonly string SavePath;
 
         private Dictionary<string, object> _settings = new();
 
-        public SettingManager()
+        public SettingManager() : this(Path.Combine(AppEnv.DataDir, "settings.json")) { }
+
+        // 테스트에서 저장 위치를 지정할 때 사용.
+        internal SettingManager(string savePath)
         {
+            SavePath = savePath;
             Load();
         }
 

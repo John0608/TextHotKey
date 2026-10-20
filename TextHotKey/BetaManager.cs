@@ -23,8 +23,9 @@ namespace TextHotKey
 
         public BetaManager(SettingManager settings) => _settings = settings;
 
-        // Supabase 설정이 채워졌는지(플레이스홀더가 아닌지) 확인.
+        // Supabase 설정이 채워졌는지(플레이스홀더가 아닌지) 확인. 테스트 모드에선 실서버를 건드리지 않는다.
         private static bool Configured =>
+            !AppEnv.IsTestMode &&
             !SupabaseUrl.Contains("YOUR_PROJECT") && !SupabaseAnonKey.StartsWith("YOUR_");
 
         // 기기 고유 참가 코드. 설정에 저장된 GUID 기반이라 재실행해도 동일하다.

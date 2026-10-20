@@ -692,7 +692,7 @@ namespace TextHotKey
 
             try
             {
-                var zipPath = Path.Combine(Path.GetTempPath(), "TextHotKey_update", "update.zip");
+                var zipPath = Path.Combine(AppEnv.UpdateTempDir, "update.zip");
 
                 var downloaded = await ShowDownloadDialogAsync(info.DownloadUrl, zipPath);
                 if (!downloaded) return; // 사용자가 취소

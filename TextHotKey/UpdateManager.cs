@@ -46,7 +46,7 @@ namespace TextHotKey
                         .Where(r => !r.Draft)
                         .Select(r => new { Release = r, Ver = ParseTag(r.TagName) })
                         .Where(x => x.Ver != null)
-                        .OrderByDescending(x => x.Ver)
+                        .OrderByDescending(x => SortKey(x.Ver!))
                         .Select(x => x.Release)
                         .FirstOrDefault();
                 }
@@ -76,7 +76,7 @@ namespace TextHotKey
             var latestStr = chosen.TagName.TrimStart('v', 'V');
             Logger.Info($"Latest version: {latestStr} (prerelease={chosen.Prerelease})");
 
-            bool available = latestVer != null && latestVer > currentVer;
+            bool available = latestVer != null && IsNewer(latestVer, currentVer);
 
             // 자동 설치용 zip 에셋을 찾는다. 규칙 이름 우선, 없으면 첫 zip.
             var asset = chosen.Assets.FirstOrDefault(a =>
@@ -89,7 +89,8 @@ namespace TextHotKey
 
         // 태그(vX.Y.Z 또는 vX.Y.Z-beta.N)를 4-part Version으로 변환한다.
         //  vX.Y.Z        -> X.Y.Z.0
-        //  vX.Y.Z-beta.N -> X.Y.Z.N  (같은 X.Y.Z 안정판(.0)보다 높게 정렬됨)
+        //  vX.Y.Z-beta.N -> X.Y.Z.N
+        // 이 값은 어셈블리 버전과 같은 표현이라 그대로 비교하면 베타가 정식판보다 높게 나온다. 비교는 IsNewer로 한다.
         internal static Version? ParseTag(string tag)
         {
             var s = tag.TrimStart('v', 'V');
@@ -103,6 +104,14 @@ namespace TextHotKey
                 int.Parse(m.Groups[3].Value),
                 beta);
         }
+
+        // candidate가 current보다 새 버전인지. (4-part 표현: X.Y.Z.0 = 정식판, X.Y.Z.N = X.Y.Z-beta.N)
+        internal static bool IsNewer(Version candidate, Version current) => SortKey(candidate) > SortKey(current);
+
+        // 시맨틱 버전 순서용 키. 4-part 표현에선 X.Y.Z.0(정식판)이 X.Y.Z.N(베타)보다 낮게 정렬되므로,
+        // 정식판을 같은 X.Y.Z의 어떤 베타보다도 높게 둔다.  1.4.0-beta.1 < 1.4.0-beta.2 < 1.4.0 < 1.4.1-beta.1
+        private static Version SortKey(Version v) =>
+            new(v.Major, v.Minor, Math.Max(v.Build, 0), v.Revision > 0 ? v.Revision : int.MaxValue);
 
         // 어셈블리 버전을 항상 4-part로 정규화(3-part 안정판은 Revision=0으로).
         private static Version GetCurrentVersionObject()

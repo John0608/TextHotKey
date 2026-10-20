@@ -86,17 +86,12 @@ namespace TextHotKey
 
         private void Load()
         {
-            if (!File.Exists(SavePath)) return;
-            var json = File.ReadAllText(SavePath);
-            _settings = JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
+            _settings = JsonFileStore.Read<Dictionary<string, object>>(SavePath) ?? new();
         }
 
         private void Save()
         {
-            var dir = Path.GetDirectoryName(SavePath)!;
-            if (!Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-            File.WriteAllText(SavePath, JsonSerializer.Serialize(_settings));
+            JsonFileStore.Write(SavePath, _settings);
         }
 
     }

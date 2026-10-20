@@ -68,6 +68,17 @@ public class UpdateCheckTests : IDisposable
         Assert.Equal("98.0.0-beta.2", info.Latest);
     }
 
+    // 베타 채널에서 같은 버전의 베타와 정식판이 함께 있으면 정식판을 고른다.
+    [Fact]
+    public async Task BetaChannel_PrefersStableOverSameVersionBeta()
+    {
+        _server.Releases.Add(new("v98.0.0-beta.3", Prerelease: true));
+        _server.Releases.Add(new("v98.0.0"));
+        var info = await new UpdateManager().CheckAsync(includePrerelease: true);
+        Assert.True(info.UpdateAvailable);
+        Assert.Equal("98.0.0", info.Latest);
+    }
+
     [Fact]
     public async Task ReleaseWithoutZipAsset_HasNullDownloadUrl()
     {

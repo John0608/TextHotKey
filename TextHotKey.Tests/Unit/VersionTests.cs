@@ -42,16 +42,25 @@ public class VersionTests
     [InlineData("v1.3.3", "v1.4.0-beta.1")]
     [InlineData("v1.4.0-beta.1", "v1.4.0-beta.2")]
     [InlineData("v1.9.0", "v1.10.0")]
-    public void Ordering_NewerTagIsGreater(string older, string newer)
+    // 시맨틱 버전 규칙상 정식판은 같은 버전의 베타보다 새 버전이어야 한다.
+    // 그래야 베타 사용자가 같은 버전의 정식판이 나왔을 때 업데이트를 받는다.
+    [InlineData("v1.4.0-beta.3", "v1.4.0")]
+    [InlineData("v1.4.0-beta.99", "v1.4.0")]
+    [InlineData("v1.4.0", "v1.4.1-beta.1")]
+    public void Ordering_NewerTagIsNewer(string older, string newer)
     {
-        Assert.True(UpdateManager.ParseTag(newer) > UpdateManager.ParseTag(older));
+        var o = UpdateManager.ParseTag(older)!;
+        var n = UpdateManager.ParseTag(newer)!;
+        Assert.True(UpdateManager.IsNewer(n, o));
+        Assert.False(UpdateManager.IsNewer(o, n));
     }
 
-    // 시맨틱 버전 규칙상 1.4.0 정식판은 1.4.0-beta.N보다 새 버전이어야 한다.
-    // 그래야 베타 사용자가 같은 버전의 정식판이 나왔을 때 업데이트를 받는다.
-    [Fact(Skip = KnownIssues.BetaSortsAboveStable)]
-    public void Ordering_StableIsNewerThanItsBeta()
+    [Theory]
+    [InlineData("v1.4.0")]
+    [InlineData("v1.4.0-beta.2")]
+    public void Ordering_SameVersionIsNotNewer(string tag)
     {
-        Assert.True(UpdateManager.ParseTag("v1.4.0") > UpdateManager.ParseTag("v1.4.0-beta.3"));
+        var v = UpdateManager.ParseTag(tag)!;
+        Assert.False(UpdateManager.IsNewer(v, v));
     }
 }

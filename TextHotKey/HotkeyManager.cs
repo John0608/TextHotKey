@@ -65,25 +65,17 @@ namespace TextHotKey
 
         private void LoadHotkeys()
         {
-            if (!File.Exists(SaveHotKeyPath)) return;
-
-            var json = File.ReadAllText(SaveHotKeyPath);
-            var list = JsonSerializer.Deserialize<List<HotkeyItem>>(json);
+            var list = JsonFileStore.Read<List<HotkeyItem?>>(SaveHotKeyPath);
             if (list != null)
             {
                 HotkeyList.Clear();
-                HotkeyList.AddRange(list);
+                HotkeyList.AddRange(list.Where(i => i != null)!);
             }
         }
 
         private void SaveHotkeys()
         {
-            var dir = Path.GetDirectoryName(SaveHotKeyPath)!;
-            if (!Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
-            var json = JsonSerializer.Serialize(HotkeyList);
-            File.WriteAllText(SaveHotKeyPath, json);
+            JsonFileStore.Write(SaveHotKeyPath, HotkeyList);
         }
 
         public (uint modifiers, uint vk) ParseHotkey(string hotkey)

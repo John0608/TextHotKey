@@ -67,6 +67,17 @@ namespace TextHotKey
             // 베타 승인 상태를 조용히 갱신(백그라운드).
             _ = RefreshBetaStatusAsync();
 
+            // 지난 업데이트가 실패해 구버전으로 되돌아온 경우 알린다.
+            // 이번 실행에선 자동 업데이트 안내를 생략한다(실패 → 재실행 → 즉시 재시도 반복 방지).
+            if (updateManager.TakeFailedUpdateMessage() is { } failure)
+            {
+                var open = await ShowAlert(
+                    $"업데이트에 실패해 이전 버전을 계속 사용합니다.\n{failure}\n\n릴리스 페이지에서 직접 설치할 수 있습니다. 지금 열까요?",
+                    "업데이트 실패");
+                if (open) updateManager.OpenReleasesPage();
+                return;
+            }
+
             if (!settingManager.GetAutoUpdate()) return;
 
             var info = await updateManager.CheckAsync(await ShouldUseBetaChannelAsync());

@@ -43,16 +43,34 @@ public class PersistenceTests : IDisposable
     }
 
     // 저장 도중 전원이 꺼지는 등으로 파일이 깨져도 앱이 시작은 되어야 한다(기본값으로).
-    [Theory(Skip = KnownIssues.CorruptSettingsCrash)]
+    [Theory]
     [InlineData("")]
     [InlineData("{\"AutoUpdate\":tr")]
     [InlineData("\0\0\0\0")]
-    public void Settings_CorruptFile_DoesNotThrow(string content)
+    [InlineData("[1,2,3]")]
+    public void Settings_CorruptFile_FallsBackToDefaults_AndKeepsBackup(string content)
     {
         Directory.CreateDirectory(_dir);
         File.WriteAllText(SettingsPath, content);
         var s = new SettingManager(SettingsPath);
         Assert.False(s.GetAutoUpdate());
+
+        // 깨진 원본은 지우지 않고 옆에 보존한다(수동 복구용).
+        var backup = Assert.Single(Directory.GetFiles(_dir, "settings.json.corrupt-*"));
+        Assert.Equal(content, File.ReadAllText(backup));
+
+        // 이후 저장은 정상 동작한다.
+        s.SetAutoUpdate(true);
+        Assert.True(new SettingManager(SettingsPath).GetAutoUpdate());
+    }
+
+    [Fact]
+    public void Settings_Save_LeavesNoTempFile()
+    {
+        var s = new SettingManager(SettingsPath);
+        s.SetAutoUpdate(true);
+        s.SetAutoUpdate(false);
+        Assert.Equal(new[] { SettingsPath }, Directory.GetFiles(_dir));
     }
 
     [Fact]
@@ -68,15 +86,27 @@ public class PersistenceTests : IDisposable
         Assert.Equal("안녕하세요", item.Text);
     }
 
-    [Theory(Skip = KnownIssues.CorruptSettingsCrash)]
+    [Theory]
     [InlineData("")]
     [InlineData("[{\"Hotkey\":\"Ctrl+A\",")]
-    public void Hotkeys_CorruptFile_DoesNotThrow(string content)
+    [InlineData("{\"Hotkey\":\"Ctrl+A\"}")]
+    public void Hotkeys_CorruptFile_StartsEmpty_AndKeepsBackup(string content)
     {
         Directory.CreateDirectory(_dir);
         File.WriteAllText(HotkeysPath, content);
         var m = new HotkeyManager(HotkeysPath);
         Assert.Empty(m.HotkeyList);
+        var backup = Assert.Single(Directory.GetFiles(_dir, "hotkeys.json.corrupt-*"));
+        Assert.Equal(content, File.ReadAllText(backup));
+    }
+
+    [Fact]
+    public void Hotkeys_NullEntries_AreIgnored()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(HotkeysPath, "[null,{\"Hotkey\":\"Ctrl+B\",\"Text\":\"x\"}]");
+        var item = Assert.Single(new HotkeyManager(HotkeysPath).HotkeyList);
+        Assert.Equal("Ctrl+B", item.Hotkey);
     }
 
     public void Dispose()

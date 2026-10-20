@@ -17,6 +17,8 @@ namespace TextHotKey
         private const uint MOD_ALT = 0x0001;
         private const uint MOD_CTRL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
+        // 키를 꾹 누를 때 자동 반복으로 단축키가 연달아 실행되지 않게 한다(새로 누를 때만 실행).
+        private const uint MOD_NOREPEAT = 0x4000;
 
         private readonly string SaveHotKeyPath;
 
@@ -37,7 +39,7 @@ namespace TextHotKey
             {
                 var (modifiers, vk) = ParseHotkey(HotkeyList[i].Hotkey);
                 if (vk != 0)
-                    RegisterHotKey(handle, i, modifiers, vk);
+                    RegisterHotKey(handle, i, modifiers | MOD_NOREPEAT, vk);
             }
         }
 

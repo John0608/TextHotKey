@@ -96,7 +96,20 @@ foreach ($tag in $FromTags) {
     $env:THK_UPGRADE_TO_VERSION = $NewVersion
     dotnet test (Join-Path $root 'TextHotKey.Tests') -c Release --no-build --filter 'Category=ReleaseUpgrade' `
         --logger "trx;LogFileName=upgrade-$tag.trx" --logger 'console;verbosity=detailed'
-    if ($LASTEXITCODE -ne 0) { $failed += $tag }
+    $testExit = $LASTEXITCODE
+
+    # 테스트가 아예 실행되지 않은 경우(필터 불일치·Skip 등)도 dotnet test는 성공을 돌려주므로,
+    # 결과 파일에서 실제로 1건이 실행되어 통과했는지 확인한다.
+    $trx = Join-Path $root "TextHotKey.Tests/TestResults/upgrade-$tag.trx"
+    $passed = 0; $total = 0
+    if (Test-Path $trx) {
+        $c = ([xml](Get-Content $trx -Raw -Encoding UTF8)).TestRun.ResultSummary.Counters
+        $passed = [int]$c.passed; $total = [int]$c.total
+    }
+    if ($testExit -ne 0 -or $passed -ne 1 -or $total -ne 1) {
+        Write-Host "::error::$tag -> $NewVersion 업데이트 검증 실패 (exit=$testExit, 실행 $total 건 중 통과 $passed 건)"
+        $failed += $tag
+    }
 }
 
 Remove-Item Env:THK_UPGRADE_* -ErrorAction SilentlyContinue

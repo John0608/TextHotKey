@@ -8,14 +8,16 @@ namespace TextHotKey
 {
     class SettingManager
     {
-        private static readonly string SavePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TextHotKey", "settings.json");
+        private readonly string SavePath;
 
         private Dictionary<string, object> _settings = new();
 
-        public SettingManager()
+        public SettingManager() : this(Path.Combine(AppEnv.DataDir, "settings.json")) { }
+
+        // 테스트에서 저장 위치를 지정할 때 사용.
+        internal SettingManager(string savePath)
         {
+            SavePath = savePath;
             Load();
         }
 
@@ -38,6 +40,17 @@ namespace TextHotKey
         public bool GetBetaOptIn()
         {
             return Get("BetaOptIn", false);
+        }
+
+        // 이 기기에서 베타 신청을 보냈는지(= 승인 대기중 판별용). 기기 코드와 같은 수명.
+        public void SetBetaRequested(bool status)
+        {
+            Set("BetaRequested", status);
+        }
+
+        public bool GetBetaRequested()
+        {
+            return Get("BetaRequested", false);
         }
 
         public void SetTheme(string theme)
@@ -73,17 +86,12 @@ namespace TextHotKey
 
         private void Load()
         {
-            if (!File.Exists(SavePath)) return;
-            var json = File.ReadAllText(SavePath);
-            _settings = JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
+            _settings = JsonFileStore.Read<Dictionary<string, object>>(SavePath) ?? new();
         }
 
         private void Save()
         {
-            var dir = Path.GetDirectoryName(SavePath)!;
-            if (!Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-            File.WriteAllText(SavePath, JsonSerializer.Serialize(_settings));
+            JsonFileStore.Write(SavePath, _settings);
         }
 
     }

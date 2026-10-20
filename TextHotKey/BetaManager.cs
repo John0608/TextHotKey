@@ -23,8 +23,9 @@ namespace TextHotKey
 
         public BetaManager(SettingManager settings) => _settings = settings;
 
-        // Supabase 설정이 채워졌는지(플레이스홀더가 아닌지) 확인.
+        // Supabase 설정이 채워졌는지(플레이스홀더가 아닌지) 확인. 테스트 모드에선 실서버를 건드리지 않는다.
         private static bool Configured =>
+            !AppEnv.IsTestMode &&
             !SupabaseUrl.Contains("YOUR_PROJECT") && !SupabaseAnonKey.StartsWith("YOUR_");
 
         // 기기 고유 참가 코드. 설정에 저장된 GUID 기반이라 재실행해도 동일하다.
@@ -41,6 +42,9 @@ namespace TextHotKey
 
         public string GetEmail() => _settings.Get("BetaEmail", "");
         public void SetEmail(string email) => _settings.Set("BetaEmail", email ?? "");
+
+        // 참가코드(기기 코드)를 새로 발급한다. 완전 탈퇴 후 재신청 시 새 신원으로 시작하기 위함.
+        public void ResetDeviceCode() => _settings.Set("BetaDeviceId", Guid.NewGuid().ToString("N"));
 
         // 신청: beta_requests 에 code/email 을 INSERT 한다. 성공 시 true.
         // 콜드 스타트(첫 TLS 연결) 등 일시적 실패에 대비해 짧게 1회 재시도한다.
@@ -106,6 +110,33 @@ namespace TextHotKey
                 catch (Exception ex)
                 {
                     Logger.Warn($"Beta approval attempt {attempt} failed: {ex.Message}");
+                }
+                if (attempt < 2) await Task.Delay(500);
+            }
+            return false;
+        }
+
+        // 참가 완전 탈퇴: rpc beta_leave(p_code)로 이 기기 코드의 신청/승인 행을 서버에서 삭제한다.
+        public async Task<bool> LeaveAsync()
+        {
+            if (!Configured) return false;
+
+            var json = JsonSerializer.Serialize(new { p_code = GetDeviceCode() });
+
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try
+                {
+                    using var req = NewRequest(HttpMethod.Post, "/rest/v1/rpc/beta_leave");
+                    req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                    using var resp = await Http.SendAsync(req);
+                    if (resp.IsSuccessStatusCode) return true;
+                    Logger.Warn($"Beta leave HTTP {(int)resp.StatusCode} (attempt {attempt})");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"Beta leave attempt {attempt} failed: {ex.Message}");
                 }
                 if (attempt < 2) await Task.Delay(500);
             }

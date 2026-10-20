@@ -290,7 +290,7 @@
                             </Grid.ColumnDefinitions>
                             <ui:TextBox Grid.Column="0" x:Name="BetaEmailBox"
                                         PlaceholderText="이메일 (선택)" VerticalAlignment="Center" />
-                            <ui:Button Grid.Column="1" Content="신청" Margin="8,0,0,0"
+                            <ui:Button Grid.Column="1" x:Name="BetaRequestButton" Content="신청" Margin="8,0,0,0"
                                        VerticalAlignment="Center" Click="BetaRequestButton_Click" />
                         </Grid>
 
@@ -298,9 +298,14 @@
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                    FontSize="11.5" TextWrapping="Wrap" Margin="0,8,0,0" />
 
-                        <ui:Button Content="승인 상태 새로고침" Appearance="Transparent"
-                                   Padding="6,3" Margin="0,4,0,0" FontSize="12"
-                                   HorizontalAlignment="Left" Click="BetaRefreshButton_Click" />
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <ui:Button Content="승인 상태 새로고침" Appearance="Transparent"
+                                       Padding="6,3" FontSize="12" Click="BetaRefreshButton_Click" />
+                            <ui:Button x:Name="BetaLeaveButton" Content="참가 그만두기" Appearance="Transparent"
+                                       Padding="6,3" Margin="4,0,0,0" FontSize="12"
+                                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                                       Visibility="Collapsed" Click="BetaLeaveButton_Click" />
+                        </StackPanel>
 
                         <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,12" />
 

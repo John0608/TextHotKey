@@ -21,7 +21,11 @@ param(
     # 비우면 csproj의 <Version>을 사용한다.
     [string]$Version = '',
     # 설치본 파일명/표시에 쓸 사람용 버전(예: 1.3.0-beta.2). 비우면 $Version 사용.
-    [string]$DisplayVersion = ''
+    [string]$DisplayVersion = '',
+    # 산출물 폴더. 비우면 <저장소>\publish. (자동화 테스트가 여러 버전을 따로 빌드할 때 사용)
+    [string]$OutDir = '',
+    # 설치 마법사(Inno Setup) 빌드를 건너뛴다.
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,7 +48,7 @@ if ($appVer -eq '') {
 # 설치본 표시 버전(사람용). 지정 없으면 numeric과 동일.
 $displayVer = if ($DisplayVersion -ne '') { $DisplayVersion } else { $appVer }
 
-$publishRoot = Join-Path $root 'publish'
+$publishRoot = if ($OutDir -ne '') { $OutDir } else { Join-Path $root 'publish' }
 $outApp      = Join-Path $publishRoot 'app'
 $outUpdater  = Join-Path $publishRoot 'updater'
 $assetName   = 'TextHotKey-win-x64.zip'
@@ -87,7 +91,9 @@ $iscc = @(
 if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
 
 $setupExe = $null
-if ($iscc) {
+if ($SkipInstaller) {
+    Write-Host '-SkipInstaller 지정: 설치 마법사는 건너뜁니다.' -ForegroundColor Yellow
+} elseif ($iscc) {
     $iss = Join-Path $root 'installer\TextHotKey.iss'
     & $iscc `
         "/DMyAppVersion=$displayVer" `

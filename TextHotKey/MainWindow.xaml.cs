@@ -28,8 +28,10 @@ namespace TextHotKey
 
         // 코드에서 테마 리소스로 칠하는 요소들의 현재 상태(테마 전환 시 다시 칠하기 위함).
         private bool _hotkeysViewActive = true;
-        private string _betaStatusTextValue = "확인 전";
-        private bool? _betaStatusApprovedValue;
+
+        // 베타 신청 상태 머신.
+        private enum BetaState { None, Pending, Approved }
+        private BetaState _betaState = BetaState.None;
 
         public MainWindow()
         {
@@ -47,10 +49,11 @@ namespace TextHotKey
             AutoUpdateToggle.IsChecked = settingManager.GetAutoUpdate();
             UpdateStatusText.Text = $"현재 v{updateManager.GetCurrentVersion()}";
 
-            // 테스트(베타) 프로그램 UI 초기화.
+            // 테스트(베타) 프로그램 UI 초기화. (승인 여부는 Loaded에서 서버 확인 후 갱신)
             BetaCodeText.Text = betaManager.GetDeviceCode();
             BetaEmailBox.Text = betaManager.GetEmail();
             BetaUpdateToggle.IsChecked = settingManager.GetBetaOptIn();
+            ApplyBetaState(settingManager.GetBetaRequested() ? BetaState.Pending : BetaState.None);
 
             SetupTrayIcon();
             Closing += Window_Closing;
@@ -63,6 +66,17 @@ namespace TextHotKey
         {
             // 베타 승인 상태를 조용히 갱신(백그라운드).
             _ = RefreshBetaStatusAsync();
+
+            // 지난 업데이트가 실패해 구버전으로 되돌아온 경우 알린다.
+            // 이번 실행에선 자동 업데이트 안내를 생략한다(실패 → 재실행 → 즉시 재시도 반복 방지).
+            if (updateManager.TakeFailedUpdateMessage() is { } failure)
+            {
+                var open = await ShowAlert(
+                    $"업데이트에 실패해 이전 버전을 계속 사용합니다.\n{failure}\n\n릴리스 페이지에서 직접 설치할 수 있습니다. 지금 열까요?",
+                    "업데이트 실패");
+                if (open) updateManager.OpenReleasesPage();
+                return;
+            }
 
             if (!settingManager.GetAutoUpdate()) return;
 
@@ -169,41 +183,89 @@ namespace TextHotKey
             return await betaManager.IsApprovedAsync();
         }
 
-        // 허용목록을 조회해 승인 상태 표시/토글 활성화를 갱신한다.
+        // 서버 승인 여부 + 로컬 신청 여부로 상태를 계산해 UI를 갱신한다.
+        //  승인됨   : 서버가 approved=true
+        //  승인 대기중 : 신청은 했지만 아직 미승인
+        //  미신청    : 신청 이력 없음
         private async Task RefreshBetaStatusAsync()
         {
-            SetBetaStatus("확인 중…", approved: null);
+            ShowBetaChecking();
             bool approved = await betaManager.IsApprovedAsync();
             _betaApproved = approved;
 
-            SetBetaStatus(approved ? "승인됨 ✓" : "미승인", approved);
-            BetaUpdateToggle.IsEnabled = approved;
+            var state = approved ? BetaState.Approved
+                      : settingManager.GetBetaRequested() ? BetaState.Pending
+                      : BetaState.None;
+            ApplyBetaState(state);
         }
 
-        // 베타 상태 pill 텍스트/색을 갱신한다. approved=null 이면 확인 중(중립).
-        private void SetBetaStatus(string text, bool? approved)
+        // 상태별 뱃지 색/문구 + 이메일 잠금 + 신청 버튼/베타 토글 활성화를 일괄 적용한다.
+        private void ApplyBetaState(BetaState state)
         {
-            _betaStatusTextValue = text;
-            _betaStatusApprovedValue = approved;
+            _betaState = state;
+
+            string text, bgKey, fgKey;
+            bool emailLocked, canRequest, toggleEnabled;
+
+            switch (state)
+            {
+                case BetaState.Approved:
+                    text = "승인됨 ✓";
+                    bgKey = "SystemFillColorSuccessBackgroundBrush"; fgKey = "SystemFillColorSuccessBrush";
+                    emailLocked = true; canRequest = false; toggleEnabled = true;
+                    break;
+                case BetaState.Pending:
+                    text = "승인 대기중";
+                    bgKey = "SystemFillColorCautionBackgroundBrush"; fgKey = "SystemFillColorCautionBrush";
+                    emailLocked = true; canRequest = false; toggleEnabled = false;
+                    break;
+                default: // None
+                    text = "미신청";
+                    bgKey = "SubtleFillColorSecondaryBrush"; fgKey = "TextFillColorSecondaryBrush";
+                    emailLocked = false; canRequest = true; toggleEnabled = false;
+                    break;
+            }
+
             BetaStatusText.Text = text;
-            string bg = approved == true ? "SystemFillColorSuccessBackgroundBrush" : "SubtleFillColorSecondaryBrush";
-            string fg = approved == true ? "SystemFillColorSuccessBrush" : "TextFillColorSecondaryBrush";
-            BetaStatusPill.Background = (System.Windows.Media.Brush)FindResource(bg);
-            BetaStatusText.Foreground = (System.Windows.Media.Brush)FindResource(fg);
+            BetaStatusPill.Background = ThemeBrush(bgKey, "SubtleFillColorSecondaryBrush");
+            BetaStatusText.Foreground = ThemeBrush(fgKey, "TextFillColorSecondaryBrush");
+            BetaEmailBox.IsReadOnly = emailLocked;
+            BetaRequestButton.IsEnabled = canRequest;
+            BetaUpdateToggle.IsEnabled = toggleEnabled;
+            // "참가 그만두기"는 참가 중(대기중/승인됨)일 때만 노출.
+            BetaLeaveButton.Visibility = state == BetaState.None ? Visibility.Collapsed : Visibility.Visible;
         }
+
+        // 서버 확인 중 임시 표시(중립).
+        private void ShowBetaChecking()
+        {
+            BetaStatusText.Text = "확인 중…";
+            BetaStatusPill.Background = ThemeBrush("SubtleFillColorSecondaryBrush", "SubtleFillColorSecondaryBrush");
+            BetaStatusText.Foreground = ThemeBrush("TextFillColorSecondaryBrush", "TextFillColorSecondaryBrush");
+        }
+
+        // 리소스 키가 없으면 폴백으로 안전하게 브러시를 얻는다(테마별 키 차이 방지).
+        private System.Windows.Media.Brush ThemeBrush(string key, string fallback)
+            => (System.Windows.Media.Brush)(TryFindResource(key) ?? FindResource(fallback));
 
         // 테스트 신청: 코드·이메일을 Supabase에 바로 제출한다(브라우저·계정 불필요).
         private async void BetaRequestButton_Click(object sender, RoutedEventArgs e)
         {
+            BetaRequestButton.IsEnabled = false; // 중복 클릭 방지
             var email = BetaEmailBox.Text.Trim();
             var ok = await betaManager.SubmitRequestAsync(email);
 
             if (ok)
-                await ShowAlert("테스트 신청이 접수되었습니다.\n오너 승인 후 '승인 상태 새로고침'을 눌러주세요.",
+            {
+                settingManager.SetBetaRequested(true);
+                await ShowAlert("테스트 신청이 접수되었습니다.\n오너 승인 후 자동으로 반영됩니다.",
                     "테스트 신청", confirm: false);
+            }
             else
+            {
                 await ShowAlert("신청 전송에 실패했습니다.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.",
                     "테스트 신청", confirm: false);
+            }
 
             await RefreshBetaStatusAsync();
         }
@@ -213,14 +275,44 @@ namespace TextHotKey
             await RefreshBetaStatusAsync();
         }
 
-        private void BetaUpdateToggle_Checked(object sender, RoutedEventArgs e)
+        // 참가 완전 탈퇴: 확인 후 서버에서 신청/승인 삭제 + 로컬 리셋 → 미신청으로.
+        private async void BetaLeaveButton_Click(object sender, RoutedEventArgs e)
         {
-            settingManager.SetBetaOptIn(true);
+            var ok = await ShowAlert(
+                "테스트(베타) 참가를 그만둘까요?\n승인이 해제되고 미신청 상태로 돌아갑니다. (다시 하려면 재신청)",
+                "참가 그만두기");
+            if (!ok) return;
+
+            var left = await betaManager.LeaveAsync();
+            if (left)
+            {
+                settingManager.SetBetaRequested(false);
+                settingManager.SetBetaOptIn(false);
+                BetaUpdateToggle.IsChecked = false;
+                // 완전 탈퇴: 참가코드도 새로 발급 → 재신청 시 새 신원으로 시작.
+                betaManager.ResetDeviceCode();
+                BetaCodeText.Text = betaManager.GetDeviceCode();
+                await ShowAlert("테스트 참가를 종료했습니다.\n참가코드가 새로 발급되었습니다.", "참가 그만두기", confirm: false);
+            }
+            else
+            {
+                await ShowAlert("처리에 실패했습니다.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.",
+                    "참가 그만두기", confirm: false);
+            }
+
+            await RefreshBetaStatusAsync();
         }
 
-        private void BetaUpdateToggle_Unchecked(object sender, RoutedEventArgs e)
+        private async void BetaUpdateToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            settingManager.SetBetaOptIn(true);
+            await RefreshUpdateStatusAsync(); // 베타 채널로 바뀌었으니 업데이트 상태 재조회
+        }
+
+        private async void BetaUpdateToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             settingManager.SetBetaOptIn(false);
+            await RefreshUpdateStatusAsync(); // 안정판 채널로 되돌았으니 사전릴리스 문구 제거
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -516,7 +608,7 @@ namespace TextHotKey
         {
             ApplyTabBrushes();
             UpdateActivateStatus();
-            SetBetaStatus(_betaStatusTextValue, _betaStatusApprovedValue);
+            ApplyBetaState(_betaState);
         }
 
         // WPF-UI가 강조색에서 파생하는 Primary 색이 특히 라이트에서 탁해 보여서,
@@ -617,6 +709,14 @@ namespace TextHotKey
                 UpdateStatusText.Text = $"현재 v{info.Current} · 최신 버전입니다";
         }
 
+        // 현재 채널(안정판/베타) 기준으로 업데이트 상태 텍스트만 다시 조회한다(설치 안내 없이).
+        // 베타 참가/탈퇴·토글로 채널이 바뀔 때 사전릴리스 문구를 즉시 반영/제거하기 위함.
+        private async Task RefreshUpdateStatusAsync()
+        {
+            var info = await updateManager.CheckAsync(await ShouldUseBetaChannelAsync());
+            UpdateSettingsUpdateStatus(info);
+        }
+
         // 새 버전 안내 → 동의 시 다운로드 → 앱 종료 → 업데이터가 교체·재실행.
         private async Task PromptAndInstallAsync(UpdateInfo info)
         {
@@ -635,7 +735,7 @@ namespace TextHotKey
 
             try
             {
-                var zipPath = Path.Combine(Path.GetTempPath(), "TextHotKey_update", "update.zip");
+                var zipPath = Path.Combine(AppEnv.UpdateTempDir, "update.zip");
 
                 var downloaded = await ShowDownloadDialogAsync(info.DownloadUrl, zipPath);
                 if (!downloaded) return; // 사용자가 취소
@@ -661,66 +761,94 @@ namespace TextHotKey
         }
 
         // 다운로드 진행률 다이얼로그. 완료 시 true, 취소 시 false. 오류는 예외로 전달.
+        //
+        // WPF-UI MessageBox는 프로그램적으로 닫는 방법(Close()/CancellationToken)이 모두
+        // 내부 TaskCompletionSource를 완료시키지 못해 100% 후에도 다이얼로그가 안 닫히는 버그가 있었다.
+        // 그래서 표준 Window + Window.Close()(=ShowDialog 확실히 반환)로 직접 구현한다.
         private async Task<bool> ShowDownloadDialogAsync(string url, string zipPath)
         {
-            var panel = new System.Windows.Controls.StackPanel { MinWidth = 280 };
-
+            var title = new System.Windows.Controls.TextBlock
+            {
+                Text = "업데이트 다운로드 중…",
+                FontSize = 14,
+                FontWeight = System.Windows.FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
             var bar = new System.Windows.Controls.ProgressBar { Minimum = 0, Maximum = 100, Value = 0, Height = 6 };
+            var pct = new System.Windows.Controls.TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 12) };
+            var cancelBtn = new Wpf.Ui.Controls.Button
+            {
+                Content = "취소",
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                Padding = new Thickness(16, 4, 16, 4)
+            };
+
+            var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(20) };
+            panel.Children.Add(title);
             panel.Children.Add(bar);
-
-            var pct = new System.Windows.Controls.TextBlock { Text = "0%", Margin = new Thickness(0, 8, 0, 0) };
             panel.Children.Add(pct);
+            panel.Children.Add(cancelBtn);
 
-            var cts = new CancellationTokenSource();
+            var win = new Wpf.Ui.Controls.FluentWindow
+            {
+                Title = "업데이트",
+                Owner = this,
+                Width = 340,
+                SizeToContent = System.Windows.SizeToContent.Height,
+                ResizeMode = System.Windows.ResizeMode.NoResize,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+                WindowBackdropType = Wpf.Ui.Controls.WindowBackdropType.None,
+                Content = panel,
+            };
+
+            var downloadCts = new CancellationTokenSource();
             var progress = new Progress<double>(p =>
             {
                 bar.Value = p * 100;
                 pct.Text = $"{p * 100:0}%";
             });
 
-            var box = new Wpf.Ui.Controls.MessageBox
-            {
-                Title = "업데이트 다운로드 중…",
-                Content = panel,
-                CloseButtonText = "취소",
-                IsPrimaryButtonEnabled = false,
-                IsSecondaryButtonEnabled = false,
-                Owner = this,
-            };
-
             bool success = false;
-            bool done = false;
             Exception? error = null;
 
-            _ = Task.Run(async () =>
+            cancelBtn.Click += (_, _) =>
             {
-                try
-                {
-                    await updateManager.DownloadAsync(url, zipPath, progress, cts.Token);
-                    success = true;
-                }
-                catch (OperationCanceledException)
-                {
-                    try { File.Delete(zipPath); } catch { /* 무시 */ }
-                }
-                catch (Exception ex)
-                {
-                    error = ex;
-                }
-                finally
-                {
-                    done = true;
-                    // MessageBox.Close()는 Obsolete로 표시돼 있으나 공개 대체 오버로드가 없어 그대로 사용한다.
-#pragma warning disable CS0618
-                    Dispatcher.Invoke(() => box.Close());
-#pragma warning restore CS0618
-                }
-            });
+                downloadCts.Cancel();
+                win.Close();
+            };
 
-            await box.ShowDialogAsync();
+            // 창이 실제로 뜬 뒤 다운로드를 시작해야, 빠른 다운로드에서 win.Close()가 표시 전에
+            // 호출돼 무시되는 레이스를 막는다.
+            Task? downloadTask = null;
+            win.ContentRendered += (_, _) =>
+            {
+                downloadTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await updateManager.DownloadAsync(url, zipPath, progress, downloadCts.Token);
+                        success = true;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try { File.Delete(zipPath); } catch { /* 무시 */ }
+                    }
+                    catch (Exception ex)
+                    {
+                        error = ex;
+                    }
+                    finally
+                    {
+                        // 완료·실패 시 진행 다이얼로그를 닫는다(UI 스레드에서). 이미 닫혔으면 무시.
+                        win.Dispatcher.Invoke(() => { if (win.IsLoaded) win.Close(); });
+                    }
+                });
+            };
 
-            // 다운로드가 끝나기 전에 닫혔다면(취소 버튼) 다운로드를 취소한다.
-            if (!done) cts.Cancel();
+            // 모달로 표시. 다운로드 완료(win.Close) 또는 사용자 취소 시 반환된다.
+            win.ShowDialog();
+            if (downloadTask != null) await downloadTask;
 
             if (error != null) throw error;
             return success;

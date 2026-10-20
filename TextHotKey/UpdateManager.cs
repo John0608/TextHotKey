@@ -34,7 +34,10 @@ namespace TextHotKey
             Release? chosen;
             try
             {
-                var client = new GitHubClient(new ProductHeaderValue("TextHotKey"));
+                var header = new ProductHeaderValue("TextHotKey");
+                var client = AppEnv.UpdateApiUrl is { } apiUrl
+                    ? new GitHubClient(header, apiUrl) // 테스트: 가짜 릴리스 서버
+                    : new GitHubClient(header);
                 if (includePrerelease)
                 {
                     // 사전 릴리스 포함 전체에서 태그를 버전으로 파싱해 가장 높은 것을 고른다.
@@ -43,7 +46,7 @@ namespace TextHotKey
                         .Where(r => !r.Draft)
                         .Select(r => new { Release = r, Ver = ParseTag(r.TagName) })
                         .Where(x => x.Ver != null)
-                        .OrderByDescending(x => x.Ver)
+                        .OrderByDescending(x => SortKey(x.Ver!))
                         .Select(x => x.Release)
                         .FirstOrDefault();
                 }
@@ -73,7 +76,7 @@ namespace TextHotKey
             var latestStr = chosen.TagName.TrimStart('v', 'V');
             Logger.Info($"Latest version: {latestStr} (prerelease={chosen.Prerelease})");
 
-            bool available = latestVer != null && latestVer > currentVer;
+            bool available = latestVer != null && IsNewer(latestVer, currentVer);
 
             // 자동 설치용 zip 에셋을 찾는다. 규칙 이름 우선, 없으면 첫 zip.
             var asset = chosen.Assets.FirstOrDefault(a =>
@@ -86,8 +89,9 @@ namespace TextHotKey
 
         // 태그(vX.Y.Z 또는 vX.Y.Z-beta.N)를 4-part Version으로 변환한다.
         //  vX.Y.Z        -> X.Y.Z.0
-        //  vX.Y.Z-beta.N -> X.Y.Z.N  (같은 X.Y.Z 안정판(.0)보다 높게 정렬됨)
-        private static Version? ParseTag(string tag)
+        //  vX.Y.Z-beta.N -> X.Y.Z.N
+        // 이 값은 어셈블리 버전과 같은 표현이라 그대로 비교하면 베타가 정식판보다 높게 나온다. 비교는 IsNewer로 한다.
+        internal static Version? ParseTag(string tag)
         {
             var s = tag.TrimStart('v', 'V');
             var m = System.Text.RegularExpressions.Regex.Match(
@@ -101,6 +105,14 @@ namespace TextHotKey
                 beta);
         }
 
+        // candidate가 current보다 새 버전인지. (4-part 표현: X.Y.Z.0 = 정식판, X.Y.Z.N = X.Y.Z-beta.N)
+        internal static bool IsNewer(Version candidate, Version current) => SortKey(candidate) > SortKey(current);
+
+        // 시맨틱 버전 순서용 키. 4-part 표현에선 X.Y.Z.0(정식판)이 X.Y.Z.N(베타)보다 낮게 정렬되므로,
+        // 정식판을 같은 X.Y.Z의 어떤 베타보다도 높게 둔다.  1.4.0-beta.1 < 1.4.0-beta.2 < 1.4.0 < 1.4.1-beta.1
+        private static Version SortKey(Version v) =>
+            new(v.Major, v.Minor, Math.Max(v.Build, 0), v.Revision > 0 ? v.Revision : int.MaxValue);
+
         // 어셈블리 버전을 항상 4-part로 정규화(3-part 안정판은 Revision=0으로).
         private static Version GetCurrentVersionObject()
         {
@@ -108,7 +120,7 @@ namespace TextHotKey
             return new Version(v.Major, v.Minor, Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
         }
 
-        private static string FormatVersion(Version v)
+        internal static string FormatVersion(Version v)
             => v.Revision > 0
                 ? $"{v.Major}.{v.Minor}.{v.Build}-beta.{v.Revision}"
                 : $"{v.Major}.{v.Minor}.{v.Build}";
@@ -159,6 +171,30 @@ namespace TextHotKey
             }
         }
 
+        // 지난 업데이트가 실패했다면 그 사유(사용자용 메시지)를 돌려주고 결과 파일을 지운다. 없거나 성공이면 null.
+        // 결과 파일은 Updater가 로그 옆(UpdateTempDir)에 남긴다: 1행 ok|fail, 2행 메시지.
+        public string? TakeFailedUpdateMessage()
+        {
+            var path = Path.Combine(AppEnv.UpdateTempDir, "update-result.txt");
+            if (!File.Exists(path)) return null;
+            try
+            {
+                var lines = File.ReadAllLines(path);
+                File.Delete(path);
+                if (lines.Length > 0 && lines[0].Trim() == "fail")
+                {
+                    var msg = string.Join("\n", lines.Skip(1)).Trim();
+                    Logger.Warn($"Previous update failed: {msg}");
+                    return msg;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"Reading update result failed: {ex.Message}");
+            }
+            return null;
+        }
+
         // Updater.exe를 임시 폴더로 복사해 실행하고, 다운로드된 zip 경로·설치 대상·현재 PID를 넘긴다.
         // 설치 폴더의 Updater.exe까지 덮어쓸 수 있도록 반드시 임시 복사본에서 실행한다.
         public bool StartUpdater(string zipPath)
@@ -173,7 +209,7 @@ namespace TextHotKey
                 return false;
             }
 
-            var tempDir = Path.Combine(Path.GetTempPath(), "TextHotKey_update");
+            var tempDir = AppEnv.UpdateTempDir;
             Directory.CreateDirectory(tempDir);
 
             var tempUpdater = Path.Combine(tempDir, "Updater.exe");
@@ -190,6 +226,7 @@ namespace TextHotKey
             psi.ArgumentList.Add("--dir"); psi.ArgumentList.Add(installDir);
             psi.ArgumentList.Add("--exe"); psi.ArgumentList.Add(exePath);
             psi.ArgumentList.Add("--pid"); psi.ArgumentList.Add(pid.ToString());
+            psi.ArgumentList.Add("--log"); psi.ArgumentList.Add(Path.Combine(tempDir, "updater.log"));
 
             Logger.Info($"Starting updater: dir={installDir}, zip={zipPath}, pid={pid}");
             Process.Start(psi);

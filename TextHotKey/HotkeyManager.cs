@@ -18,14 +18,16 @@ namespace TextHotKey
         private const uint MOD_CTRL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
 
-        private static readonly string SaveHotKeyPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "TextHotKey", "hotkeys.json");
+        private readonly string SaveHotKeyPath;
 
         public List<HotkeyItem> HotkeyList { get; private set; } = new List<HotkeyItem>();
 
-        public HotkeyManager()
+        public HotkeyManager() : this(Path.Combine(AppEnv.DataDir, "hotkeys.json")) { }
+
+        // 테스트에서 저장 위치를 지정할 때 사용.
+        internal HotkeyManager(string savePath)
         {
+            SaveHotKeyPath = savePath;
             LoadHotkeys();
         }
 
@@ -63,25 +65,17 @@ namespace TextHotKey
 
         private void LoadHotkeys()
         {
-            if (!File.Exists(SaveHotKeyPath)) return;
-
-            var json = File.ReadAllText(SaveHotKeyPath);
-            var list = JsonSerializer.Deserialize<List<HotkeyItem>>(json);
+            var list = JsonFileStore.Read<List<HotkeyItem?>>(SaveHotKeyPath);
             if (list != null)
             {
                 HotkeyList.Clear();
-                HotkeyList.AddRange(list);
+                HotkeyList.AddRange(list.Where(i => i != null)!);
             }
         }
 
         private void SaveHotkeys()
         {
-            var dir = Path.GetDirectoryName(SaveHotKeyPath)!;
-            if (!Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
-            var json = JsonSerializer.Serialize(HotkeyList);
-            File.WriteAllText(SaveHotKeyPath, json);
+            JsonFileStore.Write(SaveHotKeyPath, HotkeyList);
         }
 
         public (uint modifiers, uint vk) ParseHotkey(string hotkey)

@@ -6,22 +6,25 @@ namespace Updater
 {
     // TextHotKey 자동 업데이트 헬퍼.
     // 메인 앱이 임시 폴더로 복사해 실행한다. 다음을 순서대로 수행한다.
-    //   1) 메인 앱(PID) 종료 대기
-    //   2) 다운로드된 zip을 설치 폴더에 덮어쓰기(잠긴 파일은 잠깐 재시도)
-    //   3) 메인 앱 재실행
+    //   1) 메인 앱(PID) 종료 대기 — 끝내 종료되지 않으면 아무것도 바꾸지 않고 중단
+    //   2) 설치 폴더를 트랜잭션처럼 교체(Installer.Apply) — 실패하면 구버전 그대로 복원
+    //   3) 결과 기록(update-result.txt, 앱이 다음 실행 때 실패를 안내) + 메인 앱 재실행
     //   4) 임시 zip 정리
     // 인자: --zip <경로> --dir <설치폴더> --exe <메인exe경로> --pid <프로세스ID>
+    //       [--log <로그파일>] [--wait <앱 종료 대기 ms, 기본 30000>]
     internal static class Program
     {
         private static string _logPath = "";
 
         private static int Main(string[] args)
         {
-            var tempDir = Path.Combine(Path.GetTempPath(), "TextHotKey_update");
-            try { Directory.CreateDirectory(tempDir); } catch { /* 무시 */ }
-            _logPath = Path.Combine(tempDir, "updater.log");
-
             var opts = ParseArgs(args);
+
+            _logPath = opts.TryGetValue("log", out var logArg)
+                ? logArg
+                : Path.Combine(Path.GetTempPath(), "TextHotKey_update", "updater.log");
+            try { Directory.CreateDirectory(Path.GetDirectoryName(_logPath)!); } catch { /* 무시 */ }
+            var resultPath = Path.Combine(Path.GetDirectoryName(_logPath)!, "update-result.txt");
 
             try
             {
@@ -35,17 +38,24 @@ namespace Updater
                     return 1;
                 }
 
-                if (opts.TryGetValue("pid", out var pidStr) && int.TryParse(pidStr, out var pid))
-                    WaitForExit(pid);
+                var waitMs = opts.TryGetValue("wait", out var w) && int.TryParse(w, out var ms) ? ms : 30000;
+                if (opts.TryGetValue("pid", out var pidStr) && int.TryParse(pidStr, out var pid) && !WaitForExit(pid, waitMs))
+                {
+                    // 앱이 아직 떠 있다 → 파일을 건드리지 않는다(앱은 계속 실행 중이므로 재실행도 하지 않음).
+                    WriteResult(resultPath, false, "실행 중인 TextHotKey가 종료되지 않아 업데이트를 중단했습니다.");
+                    return 3;
+                }
 
                 if (!File.Exists(zip))
                 {
                     Log($"zip 파일 없음: {zip}");
+                    WriteResult(resultPath, false, "다운로드한 업데이트 파일을 찾지 못했습니다.");
                     Relaunch(exe);
                     return 2;
                 }
 
-                ExtractOver(zip, dir);
+                new Installer(Log).Apply(zip, dir);
+                WriteResult(resultPath, true, "");
                 Log("교체 완료. 앱 재실행.");
                 Relaunch(exe);
 
@@ -56,7 +66,8 @@ namespace Updater
             catch (Exception ex)
             {
                 Log($"업데이트 실패: {ex}");
-                // 실패해도 사용자가 계속 쓸 수 있도록 기존 앱을 다시 띄운다.
+                WriteResult(resultPath, false, ex is UpdateException ? ex.Message : $"업데이트 중 오류: {ex.Message}");
+                // 실패해도 사용자가 계속 쓸 수 있도록 기존 앱을 다시 띄운다(설치 폴더는 구버전으로 복원된 상태).
                 if (opts.TryGetValue("exe", out var exe) && File.Exists(exe))
                     Relaunch(exe);
                 return 99;
@@ -78,70 +89,33 @@ namespace Updater
             return d;
         }
 
-        // 메인 앱이 종료될 때까지 대기(최대 30초).
-        private static void WaitForExit(int pid)
+        // 메인 앱이 종료될 때까지 대기. 시간 안에 종료되면(또는 이미 종료됐으면) true.
+        private static bool WaitForExit(int pid, int timeoutMs)
         {
             try
             {
                 var p = Process.GetProcessById(pid);
                 Log($"PID {pid} 종료 대기...");
-                if (!p.WaitForExit(30000))
-                    Log($"PID {pid} 30초 내 미종료. 계속 진행.");
-                else
-                    Log($"PID {pid} 종료 확인.");
+                if (!p.WaitForExit(timeoutMs))
+                {
+                    Log($"PID {pid} {timeoutMs}ms 내 미종료. 업데이트 중단.");
+                    return false;
+                }
+                Log($"PID {pid} 종료 확인.");
+                return true;
             }
             catch (ArgumentException)
             {
                 Log($"PID {pid} 이미 종료됨.");
+                return true;
             }
         }
 
-        // zip 내용을 설치 폴더에 덮어쓴다. 잠긴 파일은 잠깐 재시도한다.
-        private static void ExtractOver(string zipPath, string destDir)
+        // 앱이 다음 실행 때 읽어 실패를 안내한다. 1행: ok|fail, 2행: 사용자용 메시지.
+        private static void WriteResult(string path, bool ok, string message)
         {
-            Directory.CreateDirectory(destDir);
-            var destFull = Path.GetFullPath(destDir);
-
-            using var archive = ZipFile.OpenRead(zipPath);
-            foreach (var entry in archive.Entries)
-            {
-                // 디렉터리 엔트리는 건너뛴다(파일 추출 시 폴더 생성).
-                if (string.IsNullOrEmpty(entry.Name))
-                    continue;
-
-                var targetPath = Path.GetFullPath(Path.Combine(destFull, entry.FullName));
-
-                // zip-slip 방지: 대상 폴더를 벗어나는 경로는 무시.
-                if (!targetPath.StartsWith(destFull, StringComparison.OrdinalIgnoreCase))
-                {
-                    Log($"경로 이탈 엔트리 건너뜀: {entry.FullName}");
-                    continue;
-                }
-
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                ExtractEntryWithRetry(entry, targetPath);
-            }
-        }
-
-        private static void ExtractEntryWithRetry(ZipArchiveEntry entry, string targetPath)
-        {
-            const int maxAttempts = 20;
-            for (int attempt = 1; ; attempt++)
-            {
-                try
-                {
-                    entry.ExtractToFile(targetPath, overwrite: true);
-                    return;
-                }
-                catch (Exception ex) when (
-                    (ex is IOException || ex is UnauthorizedAccessException) && attempt < maxAttempts)
-                {
-                    // 앱 종료 직후 파일이 잠시 잠겨 있을 수 있다. 잠깐 대기 후 재시도.
-                    if (attempt == 1)
-                        Log($"파일 잠김, 재시도: {targetPath}");
-                    Thread.Sleep(500);
-                }
-            }
+            try { File.WriteAllText(path, (ok ? "ok" : "fail") + Environment.NewLine + message); }
+            catch (Exception ex) { Log($"결과 기록 실패: {ex.Message}"); }
         }
 
         private static void Relaunch(string exePath)

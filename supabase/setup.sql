@@ -48,3 +48,12 @@ $$;
 
 -- 익명 키가 함수를 실행할 수 있게 허용
 grant execute on function public.beta_is_approved(text) to anon;
+
+-- 4) 참가 완전 탈퇴: 해당 코드의 신청/승인 행을 삭제한다.
+--    (RLS로 anon은 DELETE 불가라, SECURITY DEFINER 함수로만 자기 코드 행을 지운다.)
+create or replace function public.beta_leave(p_code text)
+returns void language sql security definer set search_path = public as $$
+  delete from public.beta_requests where code = p_code;
+$$;
+
+grant execute on function public.beta_leave(text) to anon;

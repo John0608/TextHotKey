@@ -13,6 +13,7 @@ namespace TextHotKey
     {
         private bool _isActive = false;
         private readonly HotkeyManager _hotkeyManager = new HotkeyManager();
+        private readonly TextInjector _textInjector;
         private readonly SettingManager settingManager = new SettingManager();
         private readonly UpdateManager updateManager = new UpdateManager();
         private readonly BetaManager betaManager;
@@ -36,6 +37,7 @@ namespace TextHotKey
         public MainWindow()
         {
             InitializeComponent();
+            _textInjector = new TextInjector(Dispatcher);
             betaManager = new BetaManager(settingManager);
 
             // 저장된 테마 + 커스텀 강조색 적용.
@@ -142,6 +144,7 @@ namespace TextHotKey
         {
             _exitRequested = true;
             _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
+            _textInjector.Dispose();
             _trayIcon?.Dispose();
             _trayIcon = null;
             System.Windows.Application.Current.Shutdown();
@@ -331,255 +334,26 @@ namespace TextHotKey
                 if (id >= 0 && id < _hotkeyManager.HotkeyList.Count)
                 {
                     handled = true;
-                    SendText(_hotkeyManager.HotkeyList[id].Text);
+                    var item = _hotkeyManager.HotkeyList[id];
+                    var (_, vk) = _hotkeyManager.ParseHotkey(item.Hotkey);
+                    if (_textInjector.ShouldFire(id, (int)vk))
+                        SendText(item.Text);
                 }
             }
             return IntPtr.Zero;
         }
 
-        // 텍스트 입력
-
-        // 이 길이 이상이면 클립보드 붙여넣기, 미만이면 키 입력으로 처리한다.
-        private const int ClipboardPasteThreshold = 20;
-
-        // 설정된 텍스트를 활성 창에 입력한다.
-        // - 짧은 텍스트: 유니코드 키 입력 (붙여넣기를 지원하지 않는 곳에서도 동작)
-        // - 긴 텍스트: 클립보드에 넣고 Ctrl+V로 한 번에 붙여넣기 (길이와 무관하게 즉시 삽입)
-        //
-        // 단축키 조합키(Ctrl/Alt/Shift)가 아직 눌린 상태에서 텍스트를 주입하면,
-        // 일부 웹 입력창에서 곧이어 누른 Enter에 방금 넣은 텍스트가 지워지는 레이스가 있었다.
-        // 그래서 조합키가 모두 떼어질 때까지(최대 500ms) 기다린 뒤 주입한다.
-        // async/await로 UI 스레드를 막지 않고 대기하므로, 대기 중에도 키 입력 메시지가 정상 처리된다.
-        private async void SendText(string text)
+        // 텍스트 입력 (조합키 처리·사용자 키 추적은 TextInjector 참고)
+        private void SendText(string text)
         {
-            if (string.IsNullOrEmpty(text)) return;
-
             try
             {
-                await WaitForModifiersReleasedAsync();
-
-                if (text.Length >= ClipboardPasteThreshold)
-                    SendViaClipboard(text);
-                else
-                    SendViaKeystrokes(text);
+                _textInjector.Send(text);
             }
             catch (Exception ex)
             {
                 Logger.Error($"SendText failed: {ex.Message}");
             }
-        }
-
-        // 눌려 있는 Ctrl/Alt/Shift가 모두 떼어질 때까지 짧게 폴링하며 기다린다(최대 maxWaitMs).
-        // 조합키가 없으면 즉시 반환하므로 단축키에 조합키가 없을 때는 지연이 없다.
-        private static async Task WaitForModifiersReleasedAsync(int maxWaitMs = 500)
-        {
-            const int stepMs = 15;
-            int waited = 0;
-            while (waited < maxWaitMs && AnyModifierDown())
-            {
-                await Task.Delay(stepMs);
-                waited += stepMs;
-            }
-        }
-
-        private static bool AnyModifierDown()
-            => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
-            || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0
-            || (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-
-        // 전체 문자열을 단 한 번의 SendInput 호출로 입력한다.
-        // (문자마다 SendInput을 호출하던 기존 방식보다 훨씬 빠르고 글자 누락이 없다.)
-        private void SendViaKeystrokes(string text)
-        {
-            var inputs = new List<INPUT>(text.Length * 2 + 3);
-
-            // 단축키 조합으로 눌려 있는 Ctrl/Alt/Shift를 먼저 떼어
-            // 텍스트가 조합키와 함께 입력되는 것을 방지한다. (기존 100ms 지연 대체)
-            AppendModifierRelease(inputs, VK_CONTROL);
-            AppendModifierRelease(inputs, VK_MENU);
-            AppendModifierRelease(inputs, VK_SHIFT);
-
-            // 각 문자를 유니코드 입력(KEYEVENTF_UNICODE)으로 변환해 배치에 담는다.
-            // 유니코드 입력은 키보드 레이아웃/조합키의 영향을 받지 않는다.
-            foreach (char c in text)
-            {
-                inputs.Add(MakeUnicodeInput(c, keyUp: false));
-                inputs.Add(MakeUnicodeInput(c, keyUp: true));
-            }
-
-            var array = inputs.ToArray();
-            SendInput((uint)array.Length, array, Marshal.SizeOf<INPUT>());
-        }
-
-        // 텍스트를 클립보드에 넣고 Ctrl+V로 붙여넣는다. 길이와 무관하게 즉시 삽입된다.
-        private void SendViaClipboard(string text)
-        {
-            // 기존 클립보드 텍스트를 백업했다가 붙여넣기 후 복원한다.
-            string? backup = null;
-            try { if (System.Windows.Clipboard.ContainsText()) backup = System.Windows.Clipboard.GetText(); }
-            catch { }
-
-            try
-            {
-                System.Windows.Clipboard.SetText(text);
-            }
-            catch
-            {
-                // 클립보드 사용 실패 시 키 입력 방식으로 대체한다.
-                SendViaKeystrokes(text);
-                return;
-            }
-
-            SendPaste();
-
-            // 대상 앱이 붙여넣기를 처리할 시간을 준 뒤 원래 클립보드를 복원한다.
-            if (backup != null)
-            {
-                var restore = backup;
-                Task.Delay(300).ContinueWith(_ =>
-                    Dispatcher.Invoke(() => { try { System.Windows.Clipboard.SetText(restore); } catch { } }));
-            }
-        }
-
-        // 눌려 있는 조합키를 모두 떼고 깨끗한 Ctrl+V를 전송한다.
-        private void SendPaste()
-        {
-            var inputs = new List<INPUT>(7);
-
-            AppendModifierRelease(inputs, VK_CONTROL);
-            AppendModifierRelease(inputs, VK_MENU);
-            AppendModifierRelease(inputs, VK_SHIFT);
-
-            inputs.Add(MakeVkInput(VK_CONTROL, keyUp: false));
-            inputs.Add(MakeVkInput(VK_V, keyUp: false));
-            inputs.Add(MakeVkInput(VK_V, keyUp: true));
-            inputs.Add(MakeVkInput(VK_CONTROL, keyUp: true));
-
-            var array = inputs.ToArray();
-            SendInput((uint)array.Length, array, Marshal.SizeOf<INPUT>());
-        }
-
-        // 해당 수정 키가 눌려 있으면 keyup 이벤트를 배치에 추가한다.
-        private static void AppendModifierRelease(List<INPUT> inputs, int vk)
-        {
-            if ((GetAsyncKeyState(vk) & 0x8000) == 0) return;
-            inputs.Add(new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                u = new InputUnion
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = (ushort)vk,
-                        wScan = 0,
-                        dwFlags = KEYEVENTF_KEYUP,
-                        time = 0,
-                        dwExtraInfo = IntPtr.Zero
-                    }
-                }
-            });
-        }
-
-        // 문자 하나를 유니코드 keydown/keyup INPUT 구조체로 만든다.
-        private static INPUT MakeUnicodeInput(char c, bool keyUp)
-        {
-            uint flags = KEYEVENTF_UNICODE;
-            if (keyUp) flags |= KEYEVENTF_KEYUP;
-            return new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                u = new InputUnion
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = flags,
-                        time = 0,
-                        dwExtraInfo = IntPtr.Zero
-                    }
-                }
-            };
-        }
-
-        // 가상 키 하나를 keydown 또는 keyup INPUT 구조체로 만든다.
-        private static INPUT MakeVkInput(int vk, bool keyUp)
-        {
-            return new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                u = new InputUnion
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = (ushort)vk,
-                        wScan = 0,
-                        dwFlags = keyUp ? KEYEVENTF_KEYUP : 0,
-                        time = 0,
-                        dwExtraInfo = IntPtr.Zero
-                    }
-                }
-            };
-        }
-
-        // SendInput 기반 고속 텍스트 입력 인터롭
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
-
-        private const uint INPUT_KEYBOARD = 1;
-        private const uint KEYEVENTF_KEYUP = 0x0002;
-        private const uint KEYEVENTF_UNICODE = 0x0004;
-
-        private const int VK_SHIFT = 0x10;
-        private const int VK_CONTROL = 0x11;
-        private const int VK_MENU = 0x12; // Alt
-        private const int VK_V = 0x56;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct INPUT
-        {
-            public uint type;
-            public InputUnion u;
-        }
-
-        [StructLayout(LayoutKind.Explicit)]
-        private struct InputUnion
-        {
-            [FieldOffset(0)] public MOUSEINPUT mi;
-            [FieldOffset(0)] public KEYBDINPUT ki;
-            [FieldOffset(0)] public HARDWAREINPUT hi;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct KEYBDINPUT
-        {
-            public ushort wVk;
-            public ushort wScan;
-            public uint dwFlags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MOUSEINPUT
-        {
-            public int dx;
-            public int dy;
-            public uint mouseData;
-            public uint dwFlags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct HARDWAREINPUT
-        {
-            public uint uMsg;
-            public ushort wParamL;
-            public ushort wParamH;
         }
 
         // ==================== 테마 ====================
@@ -633,6 +407,7 @@ namespace TextHotKey
         private void ActivateToggle_Checked(object sender, RoutedEventArgs e)
         {
             _isActive = true;
+            _textInjector.Start();
             _hotkeyManager.RegisterAll(new WindowInteropHelper(this).Handle);
             UpdateActivateStatus();
         }
@@ -641,6 +416,7 @@ namespace TextHotKey
         {
             _isActive = false;
             _hotkeyManager.UnregisterAll(new WindowInteropHelper(this).Handle);
+            _textInjector.Stop();
             UpdateActivateStatus();
         }
 

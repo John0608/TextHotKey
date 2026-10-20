@@ -97,8 +97,12 @@ public class UpdaterFailureTests(ReleaseBuildsFixture builds, ITestOutputHelper 
     {
         using var sandbox = NewInstall();
         var before = InstallSandbox.HashTree(sandbox.InstallDir);
+        sandbox.WriteSettings("{\"AutoUpdate\":false}");
         using var app = sandbox.LaunchApp();
-        Assert.True(InstallSandbox.WaitUntil(() => sandbox.RunningApps().Count == 1, Timeout));
+        // 앱이 시작 시 '지난 업데이트 결과'를 확인·삭제하는 단계를 마친 뒤에 Updater를 돌린다.
+        // (그 전에 돌리면 느린 환경에서 앱이 Updater가 남긴 결과 파일을 먼저 읽어 지워 버린다)
+        Assert.True(InstallSandbox.WaitUntil(() => sandbox.ReadAppLog().Contains("Startup: no failed update to report"), Timeout),
+            "앱이 시작 단계를 마치지 않음");
 
         var exit = RunUpdater(sandbox, builds.NewZip, "--pid", app.Id.ToString(), "--wait", "2000");
 

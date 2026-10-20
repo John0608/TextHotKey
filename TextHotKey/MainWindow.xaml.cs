@@ -79,6 +79,7 @@ namespace TextHotKey
                 if (open) updateManager.OpenReleasesPage();
                 return;
             }
+            Logger.Info("Startup: no failed update to report");
 
             if (!settingManager.GetAutoUpdate()) return;
 

@@ -1,7 +1,4 @@
 using System.Diagnostics;
-using FlaUI.Core.AutomationElements;
-using FlaUI.Core.Definitions;
-using FlaUI.UIA3;
 using TextHotKey.Tests.Infrastructure;
 using Xunit.Abstractions;
 
@@ -13,7 +10,7 @@ namespace TextHotKey.Tests.E2E;
 [Trait("Category", "E2E")]
 public class UpdateE2ETests(ReleaseBuildsFixture builds, ITestOutputHelper output)
 {
-    private static readonly TimeSpan UiTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan UiTimeout = Ui.Timeout;
 
     [Fact]
     public void AutoUpdate_ReplacesInstall_AndRelaunchesNewVersion()
@@ -125,35 +122,9 @@ public class UpdateE2ETests(ReleaseBuildsFixture builds, ITestOutputHelper outpu
         }
     }
 
-    // 프로세스의 창들에서 이름이 name인 버튼을 찾아 누른다.
-    private static bool ClickButton(Process process, string name)
-    {
-        using var automation = new UIA3Automation();
-        var app = FlaUI.Core.Application.Attach(process);
-        return InstallSandbox.WaitUntil(() =>
-        {
-            foreach (var w in app.GetAllTopLevelWindows(automation))
-            {
-                var btn = w.FindFirstDescendant(cf => cf.ByControlType(ControlType.Button).And(cf.ByName(name)));
-                if (btn != null)
-                {
-                    btn.AsButton().Invoke();
-                    return true;
-                }
-            }
-            return false;
-        }, UiTimeout, 500);
-    }
+    private static bool ClickButton(Process process, string name) => Ui.ClickButton(process, name);
 
-    private static bool WaitForText(Process process, string text)
-    {
-        using var automation = new UIA3Automation();
-        var app = FlaUI.Core.Application.Attach(process);
-        return InstallSandbox.WaitUntil(() =>
-            app.GetAllTopLevelWindows(automation).Any(w =>
-                w.FindAllDescendants().Any(e => (e.Properties.Name.ValueOrDefault ?? "").Contains(text))),
-            UiTimeout, 500);
-    }
+    private static bool WaitForText(Process process, string text) => Ui.WaitForText(process, text);
 
     private static void AssertTreeEqual(string expectedDir, string actualDir)
     {

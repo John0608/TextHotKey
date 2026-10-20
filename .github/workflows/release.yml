@@ -60,6 +60,22 @@ jobs:
         shell: pwsh
         run: ./build-release.ps1 -Version "${{ steps.ver.outputs.numeric }}" -DisplayVersion "${{ steps.ver.outputs.display }}"
 
+      - name: Verify update from previous releases
+        # 사용자가 가진 이전 릴리스(최신 안정판, 그보다 새 베타)를 설치해 이번 패키지로 실제 업데이트되는지 확인.
+        # 실패하면 이후 단계(릴리스 생성)가 실행되지 않는다.
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/verify-upgrade.ps1 -NewZip publish/TextHotKey-win-x64.zip -NewVersion "${{ steps.ver.outputs.display }}" -Repo "${{ github.repository }}"
+
+      - name: Upload upgrade test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: upgrade-test-results
+          path: TextHotKey.Tests/TestResults/*.trx
+          if-no-files-found: ignore
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:

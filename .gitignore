@@ -364,3 +364,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# 업데이트 E2E 테스트 빌드 산출물
+publish-e2e/

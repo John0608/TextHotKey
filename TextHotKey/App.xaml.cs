@@ -12,8 +12,8 @@ namespace TextHotKey
     public partial class App : System.Windows.Application
     {
         // 세션 단위(Local\) 이름 — 같은 사용자 세션에서의 중복 실행을 막는다.
-        private const string MutexName = "TextHotKey_SingleInstance_Mutex";
-        private const string ShowEventName = "TextHotKey_SingleInstance_ShowEvent";
+        private static readonly string MutexName = "TextHotKey_SingleInstance_Mutex" + AppEnv.InstanceSuffix;
+        private static readonly string ShowEventName = "TextHotKey_SingleInstance_ShowEvent" + AppEnv.InstanceSuffix;
         private const string RegKey = @"SOFTWARE\TextHotKey";
 
         private Mutex? _instanceMutex;
@@ -57,8 +57,10 @@ namespace TextHotKey
 
             base.OnStartup(e);
 
-            // 설치 경로/버전을 레지스트리에 기록 (업데이터가 참조).
-            RegisterInstallPath();
+            // 설치 경로/버전을 레지스트리에 기록 (업데이터가 참조). 테스트 모드에선 실사용 값을 덮어쓰지 않는다.
+            if (!AppEnv.IsTestMode)
+                RegisterInstallPath();
+            Logger.Info($"App started. version={_updateManager.GetCurrentVersion()}, exe={Environment.ProcessPath}");
 
             // StartupUri 대신 첫 인스턴스에서만 메인 창을 직접 생성한다.
             var mainWindow = new MainWindow();

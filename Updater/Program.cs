@@ -10,18 +10,19 @@ namespace Updater
     //   2) 다운로드된 zip을 설치 폴더에 덮어쓰기(잠긴 파일은 잠깐 재시도)
     //   3) 메인 앱 재실행
     //   4) 임시 zip 정리
-    // 인자: --zip <경로> --dir <설치폴더> --exe <메인exe경로> --pid <프로세스ID>
+    // 인자: --zip <경로> --dir <설치폴더> --exe <메인exe경로> --pid <프로세스ID> [--log <로그파일>]
     internal static class Program
     {
         private static string _logPath = "";
 
         private static int Main(string[] args)
         {
-            var tempDir = Path.Combine(Path.GetTempPath(), "TextHotKey_update");
-            try { Directory.CreateDirectory(tempDir); } catch { /* 무시 */ }
-            _logPath = Path.Combine(tempDir, "updater.log");
-
             var opts = ParseArgs(args);
+
+            _logPath = opts.TryGetValue("log", out var logArg)
+                ? logArg
+                : Path.Combine(Path.GetTempPath(), "TextHotKey_update", "updater.log");
+            try { Directory.CreateDirectory(Path.GetDirectoryName(_logPath)!); } catch { /* 무시 */ }
 
             try
             {

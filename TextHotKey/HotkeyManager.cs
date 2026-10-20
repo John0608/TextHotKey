@@ -18,14 +18,16 @@ namespace TextHotKey
         private const uint MOD_CTRL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
 
-        private static readonly string SaveHotKeyPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "TextHotKey", "hotkeys.json");
+        private readonly string SaveHotKeyPath;
 
         public List<HotkeyItem> HotkeyList { get; private set; } = new List<HotkeyItem>();
 
-        public HotkeyManager()
+        public HotkeyManager() : this(Path.Combine(AppEnv.DataDir, "hotkeys.json")) { }
+
+        // 테스트에서 저장 위치를 지정할 때 사용.
+        internal HotkeyManager(string savePath)
         {
+            SaveHotKeyPath = savePath;
             LoadHotkeys();
         }
 
